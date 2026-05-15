@@ -63,7 +63,7 @@ menu = st.sidebar.radio("MENÚ PRINCIPAL", [
     "📊 Reportes"
 ])
 
-# --- MÓDULO 1: INGRESO FÍSICO (IGUAL AL ANTERIOR) ---
+# --- MÓDULO 1: INGRESO FÍSICO ---
 if menu == "📥 Ingreso Físico":
     st.header("Registro de Ingreso Real")
     df_pl_datos = pd.DataFrame(ws_pl.get_all_records())
@@ -79,26 +79,28 @@ if menu == "📥 Ingreso Físico":
             sku_final = c1.selectbox("2. Seleccione SKU (COD II):", lista_skus_ingreso)
             desc_aux = skus_filtrados[skus_filtrados['sku'].astype(str) == sku_final]['descripcion'].values[0]
             c1.info(f"Producto: {desc_aux}")
+            
             est = c2.selectbox("Estado", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
             fv = c2.date_input("Fecha Vencimiento")
-            cant = st.number_input("Cantidad Recibida", min_value=1)
+            
+            # AJUSTE: step=1 permite usar botones, pero value=0 y el tipo permiten escritura libre
+            cant = st.number_input("Cantidad Recibida (Escriba o use botones):", min_value=0, step=1, value=0)
+            
             ref = st.text_input("Referencia / Guía")
             if st.form_submit_button("Confirmar Ingreso"):
-                actualizar_inventario(sku_final, cont_seleccionado, est, fv, cant)
-                registrar_movimiento("INGRESO_PL", sku_final, cont_seleccionado, est, fv, cant, ref)
-                st.success("✅ Ingreso registrado.")
+                if cant > 0:
+                    actualizar_inventario(sku_final, cont_seleccionado, est, fv, cant)
+                    registrar_movimiento("INGRESO_PL", sku_final, cont_seleccionado, est, fv, cant, ref)
+                    st.success(f"✅ Ingreso registrado: {cant} unidades.")
+                else:
+                    st.error("La cantidad debe ser mayor a 0.")
 
-# --- MÓDULO 3: DESPACHO MULTILÍNEA (NUEVO) ---
+# --- MÓDULO 3: DESPACHO MULTILÍNEA ---
 elif menu == "📤 Despacho Multilínea":
     st.header("Gestión de Despacho por Cliente")
-    
-    # Inicializar sesión de despacho
-    if 'despacho_cliente' not in st.session_state:
-        st.session_state.despacho_cliente = ""
-    if 'despacho_guia' not in st.session_state:
-        st.session_state.despacho_guia = ""
+    if 'despacho_cliente' not in st.session_state: st.session_state.despacho_cliente = ""
+    if 'despacho_guia' not in st.session_state: st.session_state.despacho_guia = ""
 
-    # Paso 1: Datos de Cabecera
     with st.expander("1. Datos de la Guía / Cliente", expanded=(not st.session_state.despacho_cliente)):
         c1, c2 = st.columns(2)
         cliente_input = c1.text_input("Cliente:", value=st.session_state.despacho_cliente)
@@ -114,50 +116,37 @@ elif menu == "📤 Despacho Multilínea":
             st.session_state.despacho_cliente = ""
             st.session_state.despacho_guia = ""
             st.rerun()
-
         st.divider()
 
-        # Paso 2: Selección de Producto e Inventario
         df_inv_actual = pd.DataFrame(ws_inv.get_all_records())
         if not df_inv_actual.empty:
             df_inv_actual.columns = df_inv_actual.columns.str.strip().str.lower()
-            # Solo mostrar stock mayor a 0
             df_inv_actual = df_inv_actual[df_inv_actual['stock_actual'] > 0]
-            
             sku_lista = sorted(list(df_inv_actual['sku'].astype(str).unique()))
             sku_para_despacho = st.selectbox("2. Seleccione SKU a despachar:", ["Seleccione..."] + sku_lista)
 
             if sku_para_despacho != "Seleccione...":
-                # Filtrar inventario disponible para ese SKU
                 stock_opciones = df_inv_actual[df_inv_actual['sku'].astype(str) == sku_para_despacho]
-                st.write("Saldos Disponibles por Contenedor/Estado:")
+                st.write("Saldos Disponibles:")
                 st.dataframe(stock_opciones[['contenedor', 'estado', 'fecha_vencimiento', 'stock_actual']], use_container_width=True)
 
                 with st.form("form_linea_despacho", clear_on_submit=True):
-                    st.write("Detalle de Salida:")
-                    # Crear una etiqueta clara para el selector de origen
-                    opciones_origen = [
-                        f"CONT: {r['contenedor']} | EST: {r['estado']} | FV: {r['fecha_vencimiento']} (Stock: {r['stock_actual']})"
-                        for _, r in stock_opciones.iterrows()
-                    ]
+                    opciones_origen = [f"CONT: {r['contenedor']} | EST: {r['estado']} | FV: {r['fecha_vencimiento']} (Stock: {r['stock_actual']})" for _, r in stock_opciones.iterrows()]
                     origen_sel = st.selectbox("Seleccione el origen específico:", opciones_origen)
-                    
-                    # Extraer datos de la opción seleccionada
                     idx_sel = opciones_origen.index(origen_sel)
                     fila_sel = stock_opciones.iloc[idx_sel]
                     
-                    cant_salida = st.number_input("Cantidad a despachar:", min_value=1, max_value=int(fila_sel['stock_actual']))
+                    # AJUSTE: También permitimos escritura manual aquí
+                    cant_salida = st.number_input("Cantidad a despachar:", min_value=0, max_value=int(fila_sel['stock_actual']), step=1)
                     
                     if st.form_submit_button("Confirmar salida de este SKU"):
-                        # Ejecutar actualización
-                        actualizar_inventario(sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], -cant_salida)
-                        registrar_movimiento("SALIDA_DESPACHO", sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], cant_salida, st.session_state.despacho_guia, st.session_state.despacho_cliente)
-                        st.success(f"✅ Salida registrada: {cant_salida} und de {sku_para_despacho}")
-                        st.info("Puede seleccionar otro SKU arriba para continuar con la misma guía.")
-        else:
-            st.warning("No hay stock disponible en inventario.")
+                        if cant_salida > 0:
+                            actualizar_inventario(sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], -cant_salida)
+                            registrar_movimiento("SALIDA_DESPACHO", sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], cant_salida, st.session_state.despacho_guia, st.session_state.despacho_cliente)
+                            st.success(f"✅ Salida registrada.")
+                            st.rerun() # Para actualizar la tabla de stock disponible inmediatamente
 
-# --- MÓDULOS RESTANTES (RECLASIFICACIÓN, REPORTES, ETC.) SE MANTIENEN IGUAL ---
+# --- MÓDULOS RESTANTES (RECLASIFICACIÓN, PACKING LIST, REPORTES) MANTENIDOS IGUAL ---
 elif menu == "🔄 Reclasificación":
     st.header("Cambio de Estado Interno")
     with st.form("recla"):
@@ -167,7 +156,7 @@ elif menu == "🔄 Reclasificación":
         c1, c2 = st.columns(2)
         est_orig = c1.selectbox("De:", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
         est_dest = c2.selectbox("A:", ["Merma", "Bandejas", "Disponible", "Distribuidores"])
-        cant = st.number_input("Cantidad", min_value=1)
+        cant = st.number_input("Cantidad", min_value=1, step=1)
         if st.form_submit_button("Mover Stock"):
             actualizar_inventario(sku, cont, est_orig, fv, -cant)
             actualizar_inventario(sku, cont, est_dest, fv, cant)
