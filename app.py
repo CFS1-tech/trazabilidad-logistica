@@ -19,133 +19,179 @@ def conectar_gsheet():
 gc = conectar_gsheet()
 ws_pl, ws_inv, ws_mov, ws_pick = gc.worksheet("packing_list"), gc.worksheet("inventario"), gc.worksheet("movimientos"), gc.worksheet("picking")
 
-# --- FUNCIÓN DE ESTANDARIZACIÓN DE FECHAS (EL CORAZÓN DEL SCRIPT) ---
-def estandarizar_fechas(df, columna):
-    if df.empty or columna not in df.columns:
-        return df
-    
-    # Convertir a datetime de forma flexible (maneja formatos mixtos y errores)
+# --- FUNCIONES DE SOPORTE (ESTANDARIZACIÓN) ---
+def formatear_fecha_lectura(df, columna, solo_fecha=False):
+    if df.empty or columna not in df.columns: return df
     df[columna] = pd.to_datetime(df[columna], errors='coerce', dayfirst=True)
-    
-    # Ordenar por fecha (opcional, pero recomendado para trazabilidad)
-    df = df.sort_values(by=columna, ascending=False)
-    
-    # Crear una columna de visualización bonita (String) para los reportes
-    # Esto "chanca" el desorden visual y deja todo igual: DD/MM/YYYY HH:MM:SS
-    df[f'{columna}_display'] = df[columna].dt.strftime('%d/%m/%Y %H:%M:%S').fillna("Fecha Inválida")
+    fmt = '%d/%m/%Y' if solo_fecha else '%d/%m/%Y %H:%M:%S'
+    df[f'{columna}_fmt'] = df[columna].dt.strftime(fmt).fillna("Formato Inválido")
     return df
 
-def cargar_datos_base(ws):
-    df = pd.DataFrame(ws.get_all_records())
-    if not df.empty:
-        df.columns = df.columns.str.strip().str.lower()
-    return df
+def registrar_movimiento(tipo, sku, cont, est, fv, cant, ref, cliente="N/A"):
+    # FORZADO DE FORMATO AL ESCRIBIR
+    fecha_str = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
+    ws_mov.append_row([fecha_str, tipo, str(sku).strip(), str(cont).strip(), est, cant, ref, cliente, str(fv)])
+
+def actualizar_inventario(sku, cont, est, fv, cant):
+    data = ws_inv.get_all_records()
+    df_inv = pd.DataFrame(data)
+    if not df_inv.empty: df_inv.columns = df_inv.columns.str.strip().str.lower()
+    
+    sku_s, cont_s, fv_s = str(sku).strip(), str(cont).strip(), str(fv)
+    
+    match = df_inv[(df_inv['sku'].astype(str)==sku_s) & (df_inv['contenedor'].astype(str)==cont_s) & (df_inv['estado']==est) & (df_inv['fecha_vencimiento'].astype(str)==fv_s)] if not df_inv.empty else pd.DataFrame()
+    
+    if match.empty:
+        if cant > 0: ws_inv.append_row([sku_s, cont_s, est, fv_s, cant])
+    else:
+        idx = match.index[0] + 2
+        val_actual = pd.to_numeric(match.iloc[0]['stock_actual'], errors='coerce') or 0
+        ws_inv.update_cell(idx, 5, int(val_actual + cant))
 
 # --- NAVEGACIÓN ---
-menu = st.sidebar.radio("MENÚ PRINCIPAL", ["🚀 Operaciones", "📦 Reporte de Stock", "📊 Historial", "📋 Packing List", "💡 Insights"])
+menu = st.sidebar.radio("MENÚ", ["🚀 Operaciones de Bodega", "📦 Reporte de Stock", "📊 Historial Movimientos", "📋 Estado Packing List", "💡 Insights"])
 
-# --- 1. OPERACIONES ---
-if menu == "🚀 Operaciones":
-    op = st.selectbox("Operación:", ["Ingreso Físico", "Picking", "Despacho Directo"])
-    
-    if op == "Ingreso Físico":
-        st.subheader("📥 Ingreso")
-        df_p = cargar_datos_base(ws_pl)
-        if not df_p.empty:
-            c_sel = st.selectbox("Contenedor:", sorted(df_p['contenedor'].astype(str).unique()))
-            s_sel = st.selectbox("SKU:", sorted(df_p[df_p['contenedor'].astype(str)==c_sel]['sku'].astype(str).unique()))
-            with st.form("f_ing"):
+# --- 1. OPERACIONES (TUS FUNCIONES ORIGINALES) ---
+if menu == "🚀 Operaciones de Bodega":
+    operacion = st.selectbox("Operación:", ["Ingreso Físico", "Picking (Preparación)", "Despacho Directo", "Reclasificación"])
+    st.divider()
+
+    if operacion == "Ingreso Físico":
+        st.subheader("📥 Registro de Ingreso")
+        df_pl = pd.DataFrame(ws_pl.get_all_records())
+        if not df_pl.empty:
+            df_pl.columns = df_pl.columns.str.strip().str.lower()
+            cont_sel = st.selectbox("Contenedor:", sorted(df_pl['contenedor'].unique().astype(str)))
+            sku_sel = st.selectbox("SKU:", sorted(df_pl[df_pl['contenedor'].astype(str)==cont_sel]['sku'].unique().astype(str)))
+            with st.form("f_ingreso"):
                 c1, c2 = st.columns(2)
                 est = c1.selectbox("Estado", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
-                fv = c1.date_input("Vencimiento")
-                cant = c2.number_input("Cantidad:", min_value=0)
-                ref = c2.text_input("Guía/Ref")
-                if st.form_submit_button("Confirmar"):
-                    # Registro con timestamp limpio
-                    fecha_ahora = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                    ws_mov.append_row([fecha_ahora, "INGRESO_PL", str(s_sel), str(c_sel), est, cant, ref, "N/A", str(fv)])
-                    st.success("✅ Registrado")
+                fv = c1.date_input("Fecha Vencimiento")
+                cant = c2.number_input("Cantidad Recibida:", min_value=0, step=1)
+                ref = c2.text_input("Referencia / Guía")
+                if st.form_submit_button("Guardar Ingreso"):
+                    fv_str = fv.strftime('%d/%m/%Y') # Estandarizado
+                    actualizar_inventario(sku_sel, cont_sel, est, fv_str, cant)
+                    registrar_movimiento("INGRESO_PL", sku_sel, cont_sel, est, fv_str, cant, ref)
+                    st.success("✅ Ingreso Registrado")
 
-# --- 2. REPORTE DE STOCK ---
+    elif operacion in ["Picking (Preparación)", "Despacho Directo"]:
+        tipo = "PICKING" if operacion == "Picking (Preparación)" else "DESPACHO"
+        st.subheader(f"📤 Registro de {tipo}")
+        c1, c2 = st.columns(2)
+        cliente = c1.text_input("Cliente:")
+        guia = c2.text_input("Guía de Salida:") if tipo == "DESPACHO" else "RESERVA"
+        
+        df_inv = pd.DataFrame(ws_inv.get_all_records())
+        if not df_inv.empty:
+            df_inv.columns = df_inv.columns.str.strip().str.lower()
+            df_inv['stock_actual'] = pd.to_numeric(df_inv['stock_actual'], errors='coerce').fillna(0)
+            df_inv = df_inv[df_inv['stock_actual'] > 0]
+            
+            sku_p = st.selectbox("SKU:", ["Seleccione..."] + sorted(df_inv['sku'].unique().astype(str)))
+            if sku_p != "Seleccione...":
+                opciones = df_inv[df_inv['sku'].astype(str)==sku_p]
+                st.dataframe(opciones, use_container_width=True)
+                with st.form("f_salida"):
+                    sel = st.selectbox("Seleccione Lote (Origen):", [f"{r['contenedor']} | {r['estado']} | {r['fecha_vencimiento']}" for _, r in opciones.iterrows()])
+                    cant_s = st.number_input("Cantidad:", min_value=1, step=1)
+                    if st.form_submit_button("Confirmar Movimiento"):
+                        idx = [f"{r['contenedor']} | {r['estado']} | {r['fecha_vencimiento']}" for _, r in opciones.iterrows()].index(sel)
+                        fila = opciones.iloc[idx]
+                        if tipo == "PICKING":
+                            # Lógica original de Picking
+                            ws_pick.append_row([str(datetime.now().timestamp()), sku_p, str(fila['contenedor']), fila['estado'], str(fila['fecha_vencimiento']), cant_s, cliente, datetime.now().strftime('%d/%m/%Y')])
+                        
+                        actualizar_inventario(sku_p, fila['contenedor'], fila['estado'], fila['fecha_vencimiento'], -cant_s)
+                        registrar_movimiento(f"SALIDA_{tipo}", sku_p, fila['contenedor'], fila['estado'], fila['fecha_vencimiento'], cant_s, guia, cliente)
+                        st.success("✅ Operación Exitosa"); st.rerun()
+
+    elif operacion == "Reclasificación":
+        st.subheader("♻️ Reclasificación de Estado")
+        df_inv = pd.DataFrame(ws_inv.get_all_records())
+        if not df_inv.empty:
+            df_inv.columns = df_inv.columns.str.strip().str.lower()
+            sku_r = st.selectbox("SKU a Reclasificar:", sorted(df_inv['sku'].unique().astype(str)))
+            lotes = df_inv[df_inv['sku'].astype(str)==sku_r]
+            st.dataframe(lotes)
+            with st.form("f_reclass"):
+                sel = st.selectbox("Lote Origen:", [f"{r['contenedor']} | {r['estado']} | {r['fecha_vencimiento']}" for _, r in lotes.iterrows()])
+                nuevo_est = st.selectbox("Nuevo Estado:", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
+                cant_r = st.number_input("Cantidad:", min_value=1, step=1)
+                if st.form_submit_button("Ejecutar Reclasificación"):
+                    idx = [f"{r['contenedor']} | {r['estado']} | {r['fecha_vencimiento']}" for _, r in lotes.iterrows()].index(sel)
+                    l = lotes.iloc[idx]
+                    actualizar_inventario(sku_r, l['contenedor'], l['estado'], l['fecha_vencimiento'], -cant_r)
+                    actualizar_inventario(sku_r, l['contenedor'], nuevo_est, l['fecha_vencimiento'], cant_r)
+                    registrar_movimiento("RECLASIFICACION", sku_r, l['contenedor'], f"{l['estado']}->{nuevo_est}", l['fecha_vencimiento'], cant_r, "CAMBIO_ESTADO")
+                    st.success("✅ Reclasificado")
+
+# --- 2. REPORTE DE STOCK (FILTROS + BUSCAR) ---
 elif menu == "📦 Reporte de Stock":
     st.header("Inventario Real")
-    df_i = cargar_datos_base(ws_inv)
+    df_i = pd.DataFrame(ws_inv.get_all_records())
     if not df_i.empty:
-        # Estandarizar fecha de vencimiento
-        df_i = estandarizar_fechas(df_i, 'fecha_vencimiento')
-        
+        df_i.columns = df_i.columns.str.strip().str.lower()
+        df_i = formatear_fecha_lectura(df_i, 'fecha_vencimiento', solo_fecha=True)
         with st.container(border=True):
             c1, c2 = st.columns(2)
             f_cont = c1.multiselect("Contenedor:", sorted(df_i['contenedor'].unique().astype(str)))
             f_sku = c2.text_input("SKU:")
-            btn = st.button("🔍 Buscar en Stock")
-        
-        if btn or (not f_cont and not f_sku):
-            res = df_i[pd.to_numeric(df_i['stock_actual'], errors='coerce') > 0].copy()
-            if f_cont: res = res[res['contenedor'].astype(str).isin(f_cont)]
-            if f_sku: res = res[res['sku'].astype(str).str.contains(f_sku, case=False)]
-            
-            # Mostramos la columna display y ocultamos la original de proceso
-            cols_mostrar = ['sku', 'contenedor', 'estado', 'fecha_vencimiento_display', 'stock_actual']
-            st.dataframe(res[cols_mostrar].rename(columns={'fecha_vencimiento_display': 'vencimiento'}), use_container_width=True)
+            if st.button("🔍 Buscar en Stock"):
+                res = df_i[pd.to_numeric(df_i['stock_actual'], errors='coerce') > 0].copy()
+                if f_cont: res = res[res['contenedor'].astype(str).isin(f_cont)]
+                if f_sku: res = res[res['sku'].astype(str).str.contains(f_sku, case=False)]
+                st.dataframe(res[['sku', 'contenedor', 'estado', 'fecha_vencimiento_fmt', 'stock_actual']].rename(columns={'fecha_vencimiento_fmt': 'vencimiento'}), use_container_width=True)
 
-# --- 3. HISTORIAL (EL MÁS AFECTADO POR FECHAS MIXTAS) ---
-elif menu == "📊 Historial":
+# --- 3. HISTORIAL (FILTROS + BUSCAR + FORMATO UNIFICADO) ---
+elif menu == "📊 Historial Movimientos":
     st.header("Trazabilidad Homogénea")
-    df_m = cargar_datos_base(ws_mov)
+    df_m = pd.DataFrame(ws_mov.get_all_records())
     if not df_m.empty:
-        # Aquí "chancamos" todos los formatos a uno solo
-        df_m = estandarizar_fechas(df_m, 'fecha_hora')
-        
+        df_m.columns = df_m.columns.str.strip().str.lower()
+        df_m = formatear_fecha_lectura(df_m, 'fecha_hora')
         with st.container(border=True):
             c1, c2, c3 = st.columns(3)
             f_ini = c1.date_input("Desde:", datetime.now() - timedelta(days=90))
             f_fin = c2.date_input("Hasta:", datetime.now())
             f_c = c3.multiselect("Contenedor:", sorted(df_m['contenedor'].unique().astype(str)))
             f_s = st.text_input("SKU:")
-            btn_h = st.button("🔍 Filtrar Historial")
+            if st.button("🔍 Filtrar Historial"):
+                df_m['dt'] = pd.to_datetime(df_m['fecha_hora'], errors='coerce', dayfirst=True)
+                mask = (df_m['dt'].dt.date >= f_ini) & (df_m['dt'].dt.date <= f_fin)
+                res = df_m[mask | df_m['dt'].isna()].copy()
+                if f_c: res = res[res['contenedor'].astype(str).isin(f_c)]
+                if f_s: res = res[res['sku'].astype(str).str.contains(f_s, case=False)]
+                st.dataframe(res[['fecha_hora_fmt', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia']].rename(columns={'fecha_hora_fmt': 'fecha'}), use_container_width=True)
 
-        if btn_h:
-            mask = (df_m['fecha_hora'].dt.date >= f_ini) & (df_m['fecha_hora'].dt.date <= f_fin)
-            # Incluimos los NaT (fechas rotas) para que no desaparezcan registros
-            res = df_m[mask | df_m['fecha_hora'].isna()].copy()
-            
-            if f_c: res = res[res['contenedor'].astype(str).isin(f_c)]
-            if f_s: res = res[res['sku'].astype(str).str.contains(f_s, case=False)]
-            
-            # Limpiamos las columnas para mostrar solo lo importante con formato unificado
-            display_cols = ['fecha_hora_display', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia']
-            st.dataframe(res[display_cols].rename(columns={'fecha_hora_display': 'fecha_hora'}), use_container_width=True)
-        else:
-            st.info("Use los filtros y presione Buscar para ver los movimientos.")
+# --- 4. ESTADO PACKING LIST (FILTRO + BUSCAR) ---
+elif menu == "📋 Estado Packing List":
+    st.header("Cruce Packing vs Real")
+    df_pl = pd.DataFrame(ws_pl.get_all_records())
+    df_m = pd.DataFrame(ws_mov.get_all_records())
+    if not df_pl.empty:
+        df_pl.columns = df_pl.columns.str.strip().str.lower()
+        df_m.columns = df_m.columns.str.strip().str.lower()
+        with st.container(border=True):
+            cont_f = st.selectbox("Contenedor:", ["Todos"] + sorted(df_pl['contenedor'].unique().astype(str)))
+            if st.button("🔍 Generar Reporte"):
+                real = df_m[df_m['tipo_mov']=="INGRESO_PL"]
+                real['cantidad'] = pd.to_numeric(real['cantidad'], errors='coerce').fillna(0)
+                sum_r = real.groupby(['sku', 'contenedor'])['cantidad'].sum().reset_index()
+                res = pd.merge(df_pl, sum_r, on=['sku', 'contenedor'], how='left').fillna(0)
+                if cont_f != "Todos": res = res[res['contenedor'].astype(str) == cont_f]
+                st.dataframe(res, use_container_width=True)
 
-# --- 4. INSIGHTS (CORREGIDO KEYERROR) ---
+# --- 5. INSIGHTS ---
 elif menu == "💡 Insights":
-    st.header("Análisis de Vencimientos y FIFO")
-    df_i = cargar_datos_base(ws_inv)
-    df_m = cargar_datos_base(ws_mov)
-    
+    st.header("Análisis de Stock")
+    df_i = pd.DataFrame(ws_inv.get_all_records())
     if not df_i.empty:
-        df_i = estandarizar_fechas(df_i, 'fecha_vencimiento')
-        df_i['stock_actual'] = pd.to_numeric(df_i['stock_actual'], errors='coerce').fillna(0)
-        
+        df_i.columns = df_i.columns.str.strip().str.lower()
+        df_i = formatear_fecha_lectura(df_i, 'fecha_vencimiento', solo_fecha=True)
         c1, c2 = st.columns(2)
         with c1:
-            st.subheader("🚨 Próximos Vencimientos")
-            limite = datetime.now() + timedelta(days=60)
-            prox = df_i[(df_i['fecha_vencimiento'] <= limite) & (df_i['stock_actual'] > 0)].copy()
-            if not prox.empty:
-                st.dataframe(prox[['sku', 'contenedor', 'fecha_vencimiento_display', 'stock_actual']], use_container_width=True)
-        
-        with c2:
-            st.subheader("🐢 Antigüedad de Stock (FIFO)")
-            if not df_m.empty:
-                df_m = estandarizar_fechas(df_m, 'fecha_hora')
-                ent = df_m[df_m['tipo_mov']=="INGRESO_PL"].groupby(['sku', 'contenedor'])['fecha_hora'].min().reset_index()
-                ent.columns = ['sku', 'contenedor', 'fecha_entrada']
-                
-                res_fifo = pd.merge(df_i[df_i['stock_actual']>0], ent, on=['sku', 'contenedor'], how='left')
-                res_fifo = res_fifo.sort_values('fecha_entrada')
-                res_fifo['entrada_display'] = res_fifo['fecha_entrada'].dt.strftime('%d/%m/%Y')
-                
-                st.dataframe(res_fifo[['sku', 'contenedor', 'entrada_display', 'stock_actual']], use_container_width=True)
+            st.subheader("🚨 Vencimientos Próximos")
+            df_i['dt'] = pd.to_datetime(df_i['fecha_vencimiento'], errors='coerce', dayfirst=True)
+            prox = df_i[(df_i['dt'] <= (datetime.now() + timedelta(days=60))) & (pd.to_numeric(df_i['stock_actual']) > 0)]
+            st.dataframe(prox[['sku', 'contenedor', 'fecha_vencimiento_fmt', 'stock_actual']].sort_values('dt'))
