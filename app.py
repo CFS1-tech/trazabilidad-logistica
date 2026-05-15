@@ -23,6 +23,8 @@ st.markdown("""
     [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
         color: white; font-size: 1.1em;
     }
+    /* Estilo para KPIs */
+    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #1f77b4; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -128,7 +130,6 @@ if menu == "🚀 Operaciones":
     st.header("🚀 Gestión de Bodega")
     op = st.selectbox("Acción:", ["📥 Ingreso Físico", "📝 Picking (Preparación)", "📤 Salida (Despacho)", "♻️ Reclasificación"])
     
-    # --- INGRESO ---
     if op == "📥 Ingreso Físico":
         df_pl = leer_datos("packing_list")
         if not df_pl.empty:
@@ -145,7 +146,6 @@ if menu == "🚀 Operaciones":
                     registrar_movimiento("INGRESO_PL", s_sel, c_sel, est, fv_s, cant, ref)
                     st.success("✅ Ingreso Guardado")
 
-    # --- PICKING ---
     elif op == "📝 Picking (Preparación)":
         st.subheader("Preparación de Pedido")
         df_i = leer_datos("inventario")
@@ -166,7 +166,6 @@ if menu == "🚀 Operaciones":
                     registrar_movimiento("PICKING", s_sel, c_sel, est_p, fv_p, cant, f"Pedido: {pedido}", cliente)
                     st.success("✅ Picking registrado y stock descontado.")
 
-    # --- SALIDA ---
     elif op == "📤 Salida (Despacho)":
         st.subheader("Despacho Final de Mercancía")
         df_i = leer_datos("inventario")
@@ -184,9 +183,8 @@ if menu == "🚀 Operaciones":
                 if st.form_submit_button("Confirmar Despacho"):
                     actualizar_inventario(s_sel, c_sel, est_s, fv_s, -cant)
                     registrar_movimiento("SALIDA", s_sel, c_sel, est_s, fv_s, cant, doc, cliente)
-                    st.success(f"✅ Despacho de {cant} unidades registrado.")
+                    st.success(f"✅ Despacho registrado.")
 
-    # --- RECLASIFICACIÓN ---
     elif op == "♻️ Reclasificación":
         df_i = leer_datos("inventario")
         if not df_i.empty:
@@ -221,7 +219,7 @@ elif menu == "📦 Reporte de Stock":
                 if f_sku: res = res[res['sku'].astype(str).str.contains(f_sku, case=False)]
                 st.dataframe(res[['sku', 'contenedor', 'estado', 'fecha_vencimiento_fmt', 'stock_actual']], use_container_width=True)
 
-# --- 3. REPORTE DE MERMA (BASADO EN MOVIMIENTOS) ---
+# --- 3. REPORTE DE MERMA ---
 elif menu == "🗑️ Reporte de Merma":
     st.header("🗑️ Historial de Mermas")
     df_m = leer_datos("movimientos")
@@ -237,7 +235,7 @@ elif menu == "🗑️ Reporte de Merma":
                     st.dataframe(res[['fecha_hora', 'sku', 'contenedor', 'cantidad', 'referencia']], use_container_width=True)
                 else: st.info("No hay registros de merma.")
 
-# --- 4. HISTORIAL (CON FILTROS RESTAURADOS) ---
+# --- 4. HISTORIAL ---
 elif menu == "📊 Historial":
     st.header("📊 Trazabilidad de Movimientos")
     df_m = leer_datos("movimientos")
@@ -255,7 +253,7 @@ elif menu == "📊 Historial":
                 if f_sku_h: res = res[res['sku'].astype(str).str.contains(f_sku_h, case=False)]
                 st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
 
-# --- 5. PACKING LIST (ORIGINAL) ---
+# --- 5. PACKING LIST ---
 elif menu == "📋 Packing List":
     st.header("📋 Cruce vs Packing List")
     df_pl = leer_datos("packing_list")
@@ -273,18 +271,70 @@ elif menu == "📋 Packing List":
             if cont_f != "Ver Todos": res = res[res['contenedor'].astype(str) == cont_f]
             st.dataframe(res, use_container_width=True)
 
-# --- 6. INSIGHTS ---
+# --- 6. SECCIÓN DE INSIGHTS (MEJORADA CON VALOR AGREGADO) ---
 elif menu == "💡 Insights":
-    st.header("💡 Dashboard")
+    st.header("💡 Inteligencia de Inventario")
     df_i = leer_datos("inventario")
+    
     if not df_i.empty:
         df_i['stock_actual'] = pd.to_numeric(df_i['stock_actual'], errors='coerce').fillna(0)
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Estado Stock")
-            st.bar_chart(df_i.groupby('estado')['stock_actual'].sum())
-        with c2:
-            st.subheader("Vencimientos (60 días)")
-            df_i['dt'] = pd.to_datetime(df_i['fecha_vencimiento'], errors='coerce', dayfirst=True)
-            prox = df_i[(df_i['dt'] <= (datetime.now() + timedelta(days=60))) & (df_i['stock_actual'] > 0)]
-            st.dataframe(prox[['sku', 'fecha_vencimiento', 'stock_actual']])
+        df_i['dt_venc'] = pd.to_datetime(df_i['fecha_vencimiento'], errors='coerce', dayfirst=True)
+        
+        # Filtro global de Insights
+        cont_filter = st.sidebar.selectbox("Filtrar Dashboard por:", ["Todos los Contenedores"] + sorted(df_i['contenedor'].unique().astype(str)))
+        df_dash = df_i.copy() if cont_filter == "Todos los Contenedores" else df_i[df_i['contenedor'].astype(str) == cont_filter]
+
+        # --- FILA 1: KPIs ---
+        c1, c2, c3, c4 = st.columns(4)
+        total_stock = int(df_dash['stock_actual'].sum())
+        total_skus = df_dash['sku'].nunique()
+        total_merma = int(df_dash[df_dash['estado'].str.lower() == 'merma']['stock_actual'].sum())
+        
+        # Alertas de vencimiento (60 días)
+        hoy = datetime.now()
+        venc_60 = df_dash[(df_dash['dt_venc'] <= (hoy + timedelta(days=60))) & (df_dash['stock_actual'] > 0)].shape[0]
+
+        c1.metric("Stock Total", f"{total_stock:,} unds")
+        c2.metric("SKUs Activos", total_skus)
+        c3.metric("Stock en Merma", f"{total_merma:,} unds", delta_color="inverse")
+        c4.metric("Alertas Vencimiento", venc_60, delta="-60 días", delta_color="off")
+
+        st.markdown("---")
+
+        # --- FILA 2: GRÁFICOS ---
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
+            st.subheader("📊 Distribución por Estado")
+            estado_data = df_dash.groupby('estado')['stock_actual'].sum()
+            st.bar_chart(estado_data)
+
+        with col_g2:
+            st.subheader("📦 Ocupación por Contenedor")
+            cont_data = df_dash.groupby('contenedor')['stock_actual'].sum().sort_values(ascending=False).head(10)
+            st.area_chart(cont_data)
+
+        st.markdown("---")
+
+        # --- FILA 3: VENCIMIENTOS DETALLADOS ---
+        st.subheader("🚨 Control de Vencimientos Próximos")
+        prox_venc = df_dash[(df_dash['stock_actual'] > 0)].sort_values('dt_venc').copy()
+        
+        if not prox_venc.empty:
+            # Función para dar color según cercanía de fecha
+            def highlight_venc(val):
+                color = 'white'
+                if pd.isna(val): return f'background-color: {color}'
+                dias = (val - hoy).days
+                if dias < 0: color = '#ff4b4b' # Vencido (Rojo)
+                elif dias < 30: color = '#ffa500' # Crítico (Naranja)
+                elif dias < 60: color = '#f9d71c' # Advertencia (Amarillo)
+                return f'background-color: {color}; color: black'
+
+            # Formatear para mostrar
+            prox_venc['Días para Vencer'] = (prox_venc['dt_venc'] - hoy).dt.days
+            display_venc = prox_venc[['sku', 'contenedor', 'estado', 'fecha_vencimiento', 'stock_actual', 'Días para Vencer']].head(15)
+            
+            st.dataframe(display_venc.style.applymap(highlight_venc, subset=['dt_venc'] if 'dt_venc' in display_venc.columns else []), use_container_width=True)
+        else:
+            st.success("✅ No se detectaron productos próximos a vencer.")
