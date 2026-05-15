@@ -165,7 +165,7 @@ elif menu == "📋 Estado Packing List":
         if f_cont != "Todos":
             view = view[view['NRO CONT'] == f_cont]
         
-        st.dataframe(view.style.applymap(
+        st.dataframe(view.style.map(
             lambda x: 'color: red' if isinstance(x, (int, float)) and x < 0 else None, subset=['DIF']
         ), use_container_width=True)
 
