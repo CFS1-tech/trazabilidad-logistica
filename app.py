@@ -116,7 +116,7 @@ def actualizar_inventario(sku, cont, est, fv, cant):
 st.sidebar.markdown(f"### 👤 {st.session_state.role}")
 opciones = []
 if st.session_state.role in ["Administrador", "Operativo"]: opciones.append("🚀 Operaciones")
-opciones.extend(["📦 Reporte de Stock", "🗑️ Reporte de Merma", "📊 Historial", "📋 Packing List", "💡 Insights"])
+opciones.extend(["📦 Reporte de Stock", "🗑️ Reporte de Merma", "📊 Reporte trazabilidad", "📋 Reporte PL", "💡 Insights"])
 
 menu = st.sidebar.radio("NAVEGACIÓN", opciones)
 if st.sidebar.button("🚪 Cerrar Sesión"):
@@ -240,7 +240,7 @@ elif menu == "📊 Historial":
             res = df_m[mask].copy()
             if f_cont_h: res = res[res['contenedor'].astype(str).isin(f_cont_h)]
             if f_sku_h: res = res[res['sku'].astype(str).str.contains(f_sku_h, case=False)]
-            st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
+            st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor','estado','fecha_vencimiento', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
 
 elif menu == "📋 Packing List":
     st.header("📋 Cruce vs PL")
