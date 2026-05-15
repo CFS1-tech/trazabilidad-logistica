@@ -226,7 +226,7 @@ elif menu == "🗑️ Reporte de Merma":
             st.warning(f"Total: {int(pd.to_numeric(res['cantidad']).sum())} unidades")
             st.dataframe(res[['fecha_hora', 'sku', 'contenedor', 'cantidad', 'referencia']], use_container_width=True)
 
-elif menu == "📊 Historial":
+elif menu == "📊 Reporte trazabilidad":  # <--- CORREGIDO AQUÍ
     st.header("📊 Trazabilidad")
     df_m = leer_datos("movimientos")
     if not df_m.empty:
@@ -242,7 +242,7 @@ elif menu == "📊 Historial":
             if f_sku_h: res = res[res['sku'].astype(str).str.contains(f_sku_h, case=False)]
             st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
 
-elif menu == "📋 Packing List":
+elif menu == "📋 Reporte PL":  # <--- CORREGIDO AQUÍ
     st.header("📋 Cruce vs PL")
     df_pl = leer_datos("packing_list")
     df_mov = leer_datos("movimientos")
