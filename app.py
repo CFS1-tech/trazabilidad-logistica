@@ -24,8 +24,10 @@ ws_inv = gc.worksheet("inventario")
 ws_mov = gc.worksheet("movimientos")
 
 # --- FUNCIONES CORE ---
-def registrar_movimiento(tipo, sku, cont, est, fv, cant, ref, cliente="N/A"):
-    ws_mov.append_row([str(datetime.now()), tipo, str(sku).strip(), str(cont).strip(), est, cant, ref, cliente, str(fv)])
+def registrar_movimiento(tipo, sku, cont, est, fv, cant, ref, cliente="N/A", fecha_salida=None):
+    # Si no se especifica fecha de salida, usar la fecha/hora actual del sistema
+    fecha_registro = str(fecha_salida) if fecha_salida else str(datetime.now())
+    ws_mov.append_row([fecha_registro, tipo, str(sku).strip(), str(cont).strip(), est, cant, ref, cliente, str(fv)])
 
 def actualizar_inventario(sku, cont, est, fv, cant):
     data = ws_inv.get_all_records()
@@ -79,39 +81,41 @@ if menu == "📥 Ingreso Físico":
             sku_final = c1.selectbox("2. Seleccione SKU (COD II):", lista_skus_ingreso)
             desc_aux = skus_filtrados[skus_filtrados['sku'].astype(str) == sku_final]['descripcion'].values[0]
             c1.info(f"Producto: {desc_aux}")
-            
             est = c2.selectbox("Estado", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
             fv = c2.date_input("Fecha Vencimiento")
-            
-            # AJUSTE: step=1 permite usar botones, pero value=0 y el tipo permiten escritura libre
-            cant = st.number_input("Cantidad Recibida (Escriba o use botones):", min_value=0, step=1, value=0)
-            
+            cant = st.number_input("Cantidad Recibida:", min_value=0, step=1, value=0)
             ref = st.text_input("Referencia / Guía")
             if st.form_submit_button("Confirmar Ingreso"):
                 if cant > 0:
                     actualizar_inventario(sku_final, cont_seleccionado, est, fv, cant)
                     registrar_movimiento("INGRESO_PL", sku_final, cont_seleccionado, est, fv, cant, ref)
-                    st.success(f"✅ Ingreso registrado: {cant} unidades.")
+                    st.success(f"✅ Ingreso registrado.")
                 else:
                     st.error("La cantidad debe ser mayor a 0.")
 
 # --- MÓDULO 3: DESPACHO MULTILÍNEA ---
 elif menu == "📤 Despacho Multilínea":
     st.header("Gestión de Despacho por Cliente")
+    
+    # Inicializar estados de sesión
     if 'despacho_cliente' not in st.session_state: st.session_state.despacho_cliente = ""
     if 'despacho_guia' not in st.session_state: st.session_state.despacho_guia = ""
+    if 'despacho_fecha' not in st.session_state: st.session_state.despacho_fecha = datetime.now().date()
 
-    with st.expander("1. Datos de la Guía / Cliente", expanded=(not st.session_state.despacho_cliente)):
-        c1, c2 = st.columns(2)
+    with st.expander("1. Datos de la Guía / Cliente / Fecha", expanded=(not st.session_state.despacho_cliente)):
+        c1, c2, c3 = st.columns(3)
         cliente_input = c1.text_input("Cliente:", value=st.session_state.despacho_cliente)
         guia_input = c2.text_input("N° Guía de Salida:", value=st.session_state.despacho_guia)
+        fecha_input = c3.date_input("Fecha de Salida:", value=st.session_state.despacho_fecha)
+        
         if st.button("Fijar Datos de Despacho"):
             st.session_state.despacho_cliente = cliente_input
             st.session_state.despacho_guia = guia_input
+            st.session_state.despacho_fecha = fecha_input
             st.rerun()
 
     if st.session_state.despacho_cliente and st.session_state.despacho_guia:
-        st.success(f"📍 Despachando a: **{st.session_state.despacho_cliente}** | Guía: **{st.session_state.despacho_guia}**")
+        st.success(f"📍 **Cliente:** {st.session_state.despacho_cliente} | **Guía:** {st.session_state.despacho_guia} | **Fecha Salida:** {st.session_state.despacho_fecha}")
         if st.button("Finalizar / Cambiar Cliente"):
             st.session_state.despacho_cliente = ""
             st.session_state.despacho_guia = ""
@@ -136,17 +140,19 @@ elif menu == "📤 Despacho Multilínea":
                     idx_sel = opciones_origen.index(origen_sel)
                     fila_sel = stock_opciones.iloc[idx_sel]
                     
-                    # AJUSTE: También permitimos escritura manual aquí
                     cant_salida = st.number_input("Cantidad a despachar:", min_value=0, max_value=int(fila_sel['stock_actual']), step=1)
                     
                     if st.form_submit_button("Confirmar salida de este SKU"):
                         if cant_salida > 0:
                             actualizar_inventario(sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], -cant_salida)
-                            registrar_movimiento("SALIDA_DESPACHO", sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], cant_salida, st.session_state.despacho_guia, st.session_state.despacho_cliente)
+                            # Se envía la fecha seleccionada en la cabecera
+                            registrar_movimiento("SALIDA_DESPACHO", sku_para_despacho, fila_sel['contenedor'], fila_sel['estado'], fila_sel['fecha_vencimiento'], cant_salida, st.session_state.despacho_guia, st.session_state.despacho_cliente, fecha_salida=st.session_state.despacho_fecha)
                             st.success(f"✅ Salida registrada.")
-                            st.rerun() # Para actualizar la tabla de stock disponible inmediatamente
+                            st.rerun()
+        else:
+            st.warning("No hay stock disponible.")
 
-# --- MÓDULOS RESTANTES (RECLASIFICACIÓN, PACKING LIST, REPORTES) MANTENIDOS IGUAL ---
+# --- MÓDULOS RESTANTES (SE MANTIENEN IGUAL) ---
 elif menu == "🔄 Reclasificación":
     st.header("Cambio de Estado Interno")
     with st.form("recla"):
