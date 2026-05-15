@@ -110,8 +110,8 @@ opciones = []
 if st.session_state.role in ["Administrador", "Operativo"]:
     opciones.append("🚀 Operaciones")
 opciones.append("📦 Reporte de Stock")
-opciones.append("📊 Historial")
-opciones.append("📋 Packing List")
+opciones.append("📊 Reporte trazabilidad")
+opciones.append("📋 Reporte PL")
 if st.session_state.role in ["Administrador", "Cliente"]:
     opciones.append("💡 Insights")
 
