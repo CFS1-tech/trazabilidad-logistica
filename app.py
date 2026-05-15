@@ -240,7 +240,7 @@ elif menu == "📊 Reporte trazabilidad":  # <--- CORREGIDO AQUÍ
             res = df_m[mask].copy()
             if f_cont_h: res = res[res['contenedor'].astype(str).isin(f_cont_h)]
             if f_sku_h: res = res[res['sku'].astype(str).str.contains(f_sku_h, case=False)]
-            st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
+            st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'estado','fecha_vencimiento', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
 
 elif menu == "📋 Reporte PL":  # <--- CORREGIDO AQUÍ
     st.header("📋 Cruce vs PL")
