@@ -1,313 +1,683 @@
+# =========================================================
+# SISTEMA LOGÍSTICO CARCASAS - VERSIÓN PRO OPTIMIZADA (RECUENTO=1)
+# =========================================================
+
 import streamlit as st
+import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
-import pandas as pd
-from datetime import datetime, timedelta
+from datetime import date, datetime
+import os
+import plotly.express as px
+import plotly.graph_objects as go
 
-# --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="WMS Trazabilidad Pro", layout="wide", page_icon="🏢")
+# 1. CONFIGURACIÓN DE PÁGINA
+st.set_page_config(page_title="Sistema Logístico Carcasas", page_icon="📦", layout="wide")
 
-# --- ESTILOS CSS ---
-st.markdown("""
-    <style>
-    .main { background-color: #f8f9fa; }
-    .stButton>button {
-        width: 100%;
-        border-radius: 8px;
-        height: 3em;
-        background-color: #1f77b4;
-        color: white;
-        font-weight: bold;
-    }
-    [data-testid="stSidebar"] { background-color: #262730; }
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] p {
-        color: white; font-size: 1.1em;
-    }
-    div[data-testid="stMetricValue"] { font-size: 1.8rem; color: #1f77b4; }
-    </style>
-    """, unsafe_allow_html=True)
+# 2. LOGO Y ESTILOS
+def cargar_estilos():
+    st.markdown("""
+        <style>
+        .stDataFrame { font-size: 12px; }
+        .apertura-card {
+            background-color: #ffffff; padding: 20px; border-radius: 12px;
+            border-left: 6px solid #6c5ce7; box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+            margin-bottom: 15px; min-height: 140px;
+        }
+        .tienda-titulo { color: #2d3436; font-size: 1.1em; font-weight: 700; }
+        .desc-tienda { color: #636e72; font-size: 0.85em; }
+        .fecha-est { color: #d63031; font-weight: bold; font-size: 0.9em; margin-top: 10px; }
+        .titulo-seccion {
+            color: #2d3436; font-weight: bold; font-size: 1.5rem;
+            margin-top: 25px; margin-bottom: 15px;
+            border-bottom: 3px solid #2d9e6b; padding-bottom: 8px;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
-# --- CONEXIÓN Y LECTURA CON CACHÉ ---
+@st.cache_data
+def mostrar_logo():
+    if os.path.exists("CARCASAS.png"): st.image("CARCASAS.png", width=250)
+
+cargar_estilos()
+mostrar_logo()
+
+# 3. CONEXIÓN Y CARGA
 @st.cache_resource
-def conectar_gsheet():
-    scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+def conectar_google():
     try:
+        scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
         creds = ServiceAccountCredentials.from_json_keyfile_dict(st.secrets["gcp_service_account"], scope)
-    except:
-        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
-    return gspread.authorize(creds).open("LOGISTICA_TRAZABILIDAD")
+        return gspread.authorize(creds)
+    except Exception as e:
+        st.error(f"Error de conexión: {e}"); return None
 
-@st.cache_data(ttl=60)
-def leer_datos(nombre_hoja):
+client = conectar_google()
+
+def abrir_archivo_dinamico(nombre_o_id):
+    if len(nombre_o_id) > 25:
+        return client.open_by_key(nombre_o_id)
+    return client.open(nombre_o_id)
+
+@st.cache_data(ttl=600)
+def cargar_datos_completos():
+    def fetch(nombre_o_id, hoja=None):
+        try:
+            sh = abrir_archivo_dinamico(nombre_o_id)
+            wks = sh.worksheet(hoja) if hoja else sh.sheet1
+            data = wks.get_all_records()
+            if not data: return pd.DataFrame()
+            df = pd.DataFrame(data)
+            df.columns = [str(c).strip().upper() for c in df.columns]
+            return df.astype(str)
+        except: return pd.DataFrame()
+
+    df_import_raw = fetch("Consolidado - Carcasas")
+
+    if not df_import_raw.empty and "RECUENTO" in df_import_raw.columns:
+        df_import_filtered = df_import_raw[df_import_raw["RECUENTO"].isin(["1", "1.0"])].copy()
+    else:
+        df_import_filtered = df_import_raw
+
+    return df_import_filtered, fetch("RECEPCION_IMPORTACIONES", "MOVIMIENTOS"), fetch("TIENDAS CARCASAS")
+
+
+# =========================================================
+# MÓDULO: DASH DESPACHOS
+# =========================================================
+
+ORDEN_MESES = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+               "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
+
+# Paleta verde → amarillo
+COLORES_TIENDAS = [
+    "#1a7a4a", "#2d9e6b", "#3dbb7e", "#5dcf96", "#85dcaa",
+    "#b5e878", "#cef250", "#e8d44d", "#f0c040", "#f5a623",
+    "#f7c948", "#a8d85a", "#72c472", "#4db88c", "#2eaa82",
+    "#6bcf85", "#d4e84a", "#f2d740", "#e8b830", "#c8e06a",
+]
+
+GREEN_MAIN   = "#2d9e6b"
+YELLOW_MAIN  = "#c8e06a"
+GREEN_DARK   = "#1a7a4a"
+GREEN_LIGHT  = "#85dcaa"
+
+
+@st.cache_data(ttl=600)
+def cargar_despachos():
     try:
-        client = conectar_gsheet()
-        ws = client.worksheet(nombre_hoja)
-        data = ws.get_all_records()
-        df = pd.DataFrame(data)
-        if not df.empty:
-            df.columns = df.columns.str.strip().str.lower()
+        sh = client.open("CONSOLIDADO_DESPACHOS")
+        wks = sh.sheet1
+        all_values = wks.get_all_values()
+        if not all_values or len(all_values) < 2:
+            return pd.DataFrame()
+
+        raw_headers = all_values[0]
+        rows = all_values[1:]
+
+        # Limpiar headers duplicados / vacíos
+        headers = []
+        seen = {}
+        for i, h in enumerate(raw_headers):
+            h_clean = str(h).strip()
+            if h_clean == "":
+                h_clean = f"_col_{i}"
+            key = h_clean.lower()
+            if key in seen:
+                seen[key] += 1
+                h_clean = f"{h_clean}_{seen[key]}"
+            else:
+                seen[key] = 0
+            headers.append(h_clean)
+
+        df = pd.DataFrame(rows, columns=headers)
+
+        # Normalizar nombres de columna a minúsculas para acceso uniforme
+        df.columns = [c.strip().lower() for c in df.columns]
+
+        # Eliminar columnas fantasma
+        df = df[[c for c in df.columns if not c.startswith("_col_")]]
+
+        # Eliminar filas vacías
+        df = df[df.apply(lambda r: r.astype(str).str.strip().ne("").any(), axis=1)].reset_index(drop=True)
+
+        # Tipos
+        df["unidades"] = pd.to_numeric(df.get("unidades", 0), errors="coerce").fillna(0).astype(int)
+
+        # Normalizar columna mes → MAYÚSCULAS
+        col_mes = next((c for c in df.columns if "mes" in c), None)
+        if col_mes:
+            df["mes"] = df[col_mes].astype(str).str.strip().str.upper()
+        else:
+            df["mes"] = "SIN MES"
+
+        # Columna SKU sin punto
+        col_sku = next((c for c in df.columns if "codigo_color_sin_punto" in c), None)
+        if col_sku:
+            df["sku"] = df[col_sku].astype(str).str.strip()
+        else:
+            df["sku"] = df.get("codigo_color", pd.Series([""] * len(df))).astype(str).str.strip()
+
+        # Descripción producto
+        col_desc = next((c for c in df.columns if "descripci" in c.lower()), None)
+        df["descripcion"] = df[col_desc].astype(str).str.strip() if col_desc else ""
+
+        # Tienda
+        df["codigo_departamento"] = df.get("codigo_departamento", pd.Series([""] * len(df))).astype(str).str.strip()
+
+        if "nombre_departamento" in df.columns:
+            df["nombre_tienda"] = df["nombre_departamento"].astype(str).str.replace(
+                r"^\d+\.-\s*", "", regex=True
+            ).str.strip()
+            df["nombre_departamento_full"] = df["nombre_departamento"].astype(str).str.strip()
+        else:
+            df["nombre_tienda"] = df["codigo_departamento"]
+            df["nombre_departamento_full"] = df["codigo_departamento"]
+
         return df
     except Exception as e:
-        st.error(f"Error al leer {nombre_hoja}: {e}")
+        st.error(f"❌ Error cargando CONSOLIDADO_DESPACHOS: {e}")
         return pd.DataFrame()
 
-# Instancias para ESCRITURA
-gc_write = conectar_gsheet()
-ws_inv_w = gc_write.worksheet("inventario")
-ws_mov_w = gc_write.worksheet("movimientos")
-ws_pick_w = gc_write.worksheet("picking")
 
-# --- LÓGICA DE LOGIN ---
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.role = None
+def _ordenar_meses(df, col="mes"):
+    df = df.copy()
+    df["_orden_mes"] = df[col].map(
+        {m: i for i, m in enumerate(ORDEN_MESES)}
+    ).fillna(99)
+    return df.sort_values("_orden_mes").drop(columns=["_orden_mes"])
 
-def login():
-    st.markdown("<h1 style='text-align: center; color: #1f77b4;'>🏢 Acceso WMS</h1>", unsafe_allow_html=True)
-    with st.columns([1,2,1])[1]:
-        with st.container(border=True):
-            user = st.text_input("Usuario")
-            password = st.text_input("Contraseña", type="password")
-            if st.button("Entrar al Sistema"):
-                if user == "admin" and password == "123":
-                    st.session_state.logged_in, st.session_state.role = True, "Administrador"
-                elif user == "operador" and password == "456":
-                    st.session_state.logged_in, st.session_state.role = True, "Operativo"
-                elif user == "cliente" and password == "789":
-                    st.session_state.logged_in, st.session_state.role = True, "Cliente"
-                else:
-                    st.error("❌ Credenciales incorrectas")
-                if st.session_state.logged_in: st.rerun()
 
-if not st.session_state.logged_in:
-    login()
-    st.stop()
+def _filtros_sidebar_despachos(df):
+    """Devuelve df filtrado según los filtros en sidebar."""
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### 🔍 Filtros Despachos")
 
-# --- FUNCIONES DE SOPORTE ---
-def formatear_fechas(df, col):
-    if df.empty or col not in df.columns: return df
-    df[col] = pd.to_datetime(df[col], errors='coerce', dayfirst=True)
-    df[f'{col}_fmt'] = df[col].dt.strftime('%d/%m/%Y').fillna("N/A")
-    return df
+    # Filtro tienda
+    tiendas_opts = sorted(df["nombre_tienda"].unique().tolist())
+    sel_tiendas = st.sidebar.multiselect(
+        "Tiendas",
+        options=["TODAS"] + tiendas_opts,
+        default=["TODAS"],
+        key="sb_tiendas"
+    )
 
-def registrar_movimiento(tipo, sku, cont, est, fv, cant, ref, cliente="N/A"):
-    fecha_s = datetime.now().strftime('%d/%m/%Y %H:%M:%S')
-    ws_mov_w.append_row([fecha_s, tipo, str(sku).strip(), str(cont).strip(), est, cant, ref, cliente, str(fv)])
-    st.cache_data.clear()
+    # Filtro mes
+    meses_opts = sorted(df["mes"].unique(), key=lambda m: ORDEN_MESES.index(m) if m in ORDEN_MESES else 99)
+    sel_meses = st.sidebar.multiselect(
+        "Meses",
+        options=["TODOS"] + meses_opts,
+        default=["TODOS"],
+        key="sb_meses"
+    )
 
-def actualizar_inventario(sku, cont, est, fv, cant):
-    df_inv = leer_datos("inventario")
-    sku_s, cont_s, fv_s = str(sku).strip(), str(cont).strip(), str(fv).strip()
-    match = pd.DataFrame()
-    if not df_inv.empty:
-        match = df_inv[(df_inv['sku'].astype(str)==sku_s) & 
-                       (df_inv['contenedor'].astype(str)==cont_s) & 
-                       (df_inv['estado'].astype(str).str.lower()==est.lower()) & 
-                       (df_inv['fecha_vencimiento'].astype(str)==fv_s)]
-    if match.empty:
-        if cant > 0: ws_inv_w.append_row([sku_s, cont_s, est, fv_s, cant])
+    df_f = df.copy()
+    if "TODAS" not in sel_tiendas and sel_tiendas:
+        df_f = df_f[df_f["nombre_tienda"].isin(sel_tiendas)]
+    if "TODOS" not in sel_meses and sel_meses:
+        df_f = df_f[df_f["mes"].isin(sel_meses)]
+
+    return df_f
+
+
+def _render_metricas_despachos(df):
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("📦 Total unidades", f"{int(df['unidades'].sum()):,}")
+    c2.metric("🎨 SKUs únicos", f"{df['sku'].nunique():,}")
+    c3.metric("🏪 Tiendas activas", df["codigo_departamento"].nunique())
+    c4.metric("📅 Meses con data", df["mes"].nunique())
+
+
+def _render_top10(df, n=10):
+    st.markdown('<div class="titulo-seccion">🏆 Top 10 SKUs despachados</div>', unsafe_allow_html=True)
+
+    col_f1, col_f2, col_f3 = st.columns(3)
+
+    # Filtro tienda (dentro del gráfico, independiente del sidebar)
+    with col_f1:
+        tiendas_opts = sorted(df["nombre_tienda"].unique().tolist())
+        sel_t = st.multiselect(
+            "Tienda(s)",
+            options=["TODAS"] + tiendas_opts,
+            default=["TODAS"],
+            key="top10_tienda"
+        )
+    with col_f2:
+        meses_opts = sorted(df["mes"].unique(), key=lambda m: ORDEN_MESES.index(m) if m in ORDEN_MESES else 99)
+        sel_m = st.multiselect(
+            "Mes(es)",
+            options=["TODOS"] + meses_opts,
+            default=["TODOS"],
+            key="top10_mes"
+        )
+    with col_f3:
+        n_top = st.selectbox("Mostrar top", options=[5, 10, 15, 20], index=1, key="top10_n")
+
+    df_f = df.copy()
+    if "TODAS" not in sel_t and sel_t:
+        df_f = df_f[df_f["nombre_tienda"].isin(sel_t)]
+    if "TODOS" not in sel_m and sel_m:
+        df_f = df_f[df_f["mes"].isin(sel_m)]
+
+    # Agrupar con descripción (tomar la primera descripción asociada a cada SKU)
+    desc_map = df_f.groupby("sku")["descripcion"].first().to_dict()
+
+    top = (
+        df_f.groupby("sku")["unidades"]
+        .sum()
+        .nlargest(n_top)
+        .reset_index()
+        .sort_values("unidades", ascending=True)
+    )
+    top["descripcion"] = top["sku"].map(desc_map).fillna("")
+
+    # Escala de colores verde → amarillo según posición
+    n_bars = len(top)
+    colores_barra = [
+        f"hsl({int(120 - (i / max(n_bars - 1, 1)) * 60)}, 70%, 45%)"
+        for i in range(n_bars)
+    ]
+
+    fig = go.Figure(go.Bar(
+        x=top["unidades"],
+        y=top["sku"],
+        orientation="h",
+        marker=dict(color=colores_barra),
+        text=top["unidades"].apply(lambda v: f"{v:,}"),
+        textposition="outside",
+        # Hover: SKU + descripción + unidades
+        customdata=top[["descripcion"]].values,
+        hovertemplate=(
+            "<b>SKU: %{y}</b><br>"
+            "📦 %{customdata[0]}<br>"
+            "Unidades: %{x:,}"
+            "<extra></extra>"
+        ),
+    ))
+
+    fig.update_layout(
+        height=max(380, n_top * 38),
+        margin=dict(l=10, r=80, t=10, b=30),
+        xaxis=dict(showgrid=True, gridcolor="#e8f5ee", title="Unidades"),
+        yaxis=dict(showgrid=False, title=""),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="Arial", size=12, color="#2d3436"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Tabla expandible con SKU + descripción
+    with st.expander("📋 Ver tabla detalle"):
+        tabla = top.sort_values("unidades", ascending=False).reset_index(drop=True)
+        tabla.index += 1
+        tabla = tabla.rename(columns={"sku": "SKU", "unidades": "Unidades", "descripcion": "Descripción"})
+        tabla["Unidades"] = tabla["Unidades"].apply(lambda v: f"{v:,}")
+        st.dataframe(tabla[["SKU", "Descripción", "Unidades"]], use_container_width=True)
+
+
+def _render_evolutivo(df):
+    st.markdown('<div class="titulo-seccion">📈 Evolutivo de despachos por mes</div>', unsafe_allow_html=True)
+
+    col_t, col_m = st.columns([2, 2])
+
+    with col_t:
+        tiendas_disp = sorted(df["nombre_tienda"].unique().tolist())
+        sel_tiendas = st.multiselect(
+            "Tienda(s)",
+            options=["TODAS"] + tiendas_disp,
+            default=["TODAS"],
+            key="evol_tiendas"
+        )
+    with col_m:
+        meses_disp = sorted(df["mes"].unique(), key=lambda m: ORDEN_MESES.index(m) if m in ORDEN_MESES else 99)
+        sel_meses = st.multiselect(
+            "Mes(es)",
+            options=meses_disp,
+            default=meses_disp,
+            key="evol_meses"
+        )
+
+    if not sel_meses:
+        st.info("Selecciona al menos un mes.")
+        return
+
+    df_f = df.copy()
+    if "TODAS" not in sel_tiendas and sel_tiendas:
+        df_f = df_f[df_f["nombre_tienda"].isin(sel_tiendas)]
+    if sel_meses:
+        df_f = df_f[df_f["mes"].isin(sel_meses)]
+
+    # Cuando es "TODAS" → línea total; cuando hay selección → una línea por tienda
+    modo_total = "TODAS" in sel_tiendas or not sel_tiendas
+
+    fig = go.Figure()
+
+    if modo_total:
+        pivot = df_f.groupby("mes")["unidades"].sum().reset_index()
+        pivot = _ordenar_meses(pivot)
+        fig.add_trace(go.Scatter(
+            x=pivot["mes"],
+            y=pivot["unidades"],
+            mode="lines+markers+text",
+            name="TOTAL",
+            line=dict(color=GREEN_MAIN, width=3),
+            marker=dict(size=10, color=GREEN_MAIN),
+            text=pivot["unidades"].apply(lambda v: f"{v:,}"),
+            textposition="top center",
+            hovertemplate="<b>Total</b><br>Mes: %{x}<br>Unidades: %{y:,}<extra></extra>",
+            fill="tozeroy",
+            fillcolor="rgba(45,158,107,0.12)",
+        ))
     else:
-        idx = match.index[0] + 2
-        val_actual = pd.to_numeric(match.iloc[0]['stock_actual'], errors='coerce') or 0
-        ws_inv_w.update_cell(idx, 5, int(val_actual + cant))
-    st.cache_data.clear()
+        pivot = (
+            df_f.groupby(["mes", "nombre_tienda"])["unidades"]
+            .sum()
+            .reset_index()
+        )
+        pivot = _ordenar_meses(pivot)
+        tiendas_sel_list = [t for t in sel_tiendas if t != "TODAS"]
+        for i, tienda in enumerate(tiendas_sel_list):
+            df_t = pivot[pivot["nombre_tienda"] == tienda]
+            if df_t.empty:
+                continue
+            color = COLORES_TIENDAS[i % len(COLORES_TIENDAS)]
+            fig.add_trace(go.Scatter(
+                x=df_t["mes"],
+                y=df_t["unidades"],
+                mode="lines+markers+text",
+                name=tienda,
+                line=dict(color=color, width=2.5),
+                marker=dict(size=8, color=color),
+                text=df_t["unidades"].apply(lambda v: f"{v:,}"),
+                textposition="top center",
+                hovertemplate=f"<b>{tienda}</b><br>Mes: %{{x}}<br>Unidades: %{{y:,}}<extra></extra>",
+            ))
 
-# --- MENÚ ---
-st.sidebar.markdown(f"### 👤 {st.session_state.role}")
-opciones = []
-if st.session_state.role in ["Administrador", "Operativo"]: opciones.append("🚀 Operaciones")
-opciones.extend(["📦 Reporte de Stock", "🗑️ Reporte de Merma", "📊 Reporte trazabilidad", "📋 Reporte PL", "💡 Insights"])
+    fig.update_layout(
+        height=420,
+        margin=dict(l=10, r=20, t=20, b=80),
+        xaxis=dict(showgrid=False, title=""),
+        yaxis=dict(showgrid=True, gridcolor="#e8f5ee", title="Unidades"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="Arial", size=12, color="#2d3436"),
+        legend=dict(orientation="h", yanchor="bottom", y=-0.4, xanchor="left", x=0),
+        hovermode="x unified",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-menu = st.sidebar.radio("NAVEGACIÓN", opciones)
-if st.sidebar.button("🚪 Cerrar Sesión"):
-    st.session_state.logged_in = False
-    st.cache_data.clear()
-    st.rerun()
-
-# --- SECCIONES ---
-if menu == "🚀 Operaciones":
-    st.header("🚀 Gestión de Bodega")
-    op = st.selectbox("Acción:", ["📥 Ingreso Físico", "📝 Picking (Preparación)", "📤 Salida (Despacho)", "♻️ Reclasificación"])
-    
-    if op == "📥 Ingreso Físico":
-        df_pl = leer_datos("packing_list")
-        if not df_pl.empty:
-            c_sel = st.selectbox("Contenedor:", sorted(df_pl['contenedor'].unique().astype(str)))
-            s_sel = st.selectbox("SKU:", sorted(df_pl[df_pl['contenedor'].astype(str)==c_sel]['sku'].unique().astype(str)))
-            with st.form("f_ing"):
-                est = st.selectbox("Estado", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
-                fv = st.date_input("Vencimiento")
-                cant = st.number_input("Cantidad:", min_value=1)
-                ref = st.text_input("Referencia/Guía")
-                if st.form_submit_button("Confirmar Ingreso"):
-                    fv_s = fv.strftime('%d/%m/%Y')
-                    actualizar_inventario(s_sel, c_sel, est, fv_s, cant)
-                    registrar_movimiento("INGRESO_PL", s_sel, c_sel, est, fv_s, cant, ref)
-                    st.success("✅ Ingreso Guardado")
-
-    elif op == "📝 Picking (Preparación)":
-        df_i = leer_datos("inventario")
-        if not df_i.empty:
-            df_disp = df_i[pd.to_numeric(df_i['stock_actual']) > 0]
-            s_sel = st.selectbox("SKU:", sorted(df_disp['sku'].unique().astype(str)))
-            c_sel = st.selectbox("Contenedor:", sorted(df_disp[df_disp['sku'].astype(str)==s_sel]['contenedor'].unique().astype(str)))
-            df_f = df_disp[(df_disp['sku'].astype(str)==s_sel) & (df_disp['contenedor'].astype(str)==c_sel)]
-            est_p = st.selectbox("Estado:", df_f['estado'].unique())
-            fv_p = st.selectbox("FV:", df_f['fecha_vencimiento'].unique())
-            with st.form("f_pick"):
-                cant = st.number_input("Cantidad:", min_value=1)
-                cliente = st.text_input("Cliente")
-                pedido = st.text_input("Pedido")
-                if st.form_submit_button("Registrar"):
-                    actualizar_inventario(s_sel, c_sel, est_p, fv_p, -cant)
-                    ws_pick_w.append_row([datetime.now().strftime('%d/%m/%Y %H:%M:%S'), str(s_sel), str(c_sel), cant, cliente, pedido, est_p, fv_p])
-                    registrar_movimiento("PICKING", s_sel, c_sel, est_p, fv_p, cant, f"Pedido: {pedido}", cliente)
-                    st.success("✅ Picking OK")
-
-    elif op == "📤 Salida (Despacho)":
-        df_i = leer_datos("inventario")
-        if not df_i.empty:
-            df_disp = df_i[pd.to_numeric(df_i['stock_actual']) > 0]
-            s_sel = st.selectbox("SKU:", sorted(df_disp['sku'].unique().astype(str)))
-            c_sel = st.selectbox("Contenedor:", sorted(df_disp[df_disp['sku'].astype(str)==s_sel]['contenedor'].unique().astype(str)))
-            df_f = df_disp[(df_disp['sku'].astype(str)==s_sel) & (df_disp['contenedor'].astype(str)==c_sel)]
-            est_s = st.selectbox("Estado:", df_f['estado'].unique())
-            fv_s = st.selectbox("FV:", df_f['fecha_vencimiento'].unique())
-            with st.form("f_sal"):
-                cant = st.number_input("Cantidad:", min_value=1)
-                cliente = st.text_input("Destino")
-                doc = st.text_input("Guía")
-                if st.form_submit_button("Confirmar"):
-                    actualizar_inventario(s_sel, c_sel, est_s, fv_s, -cant)
-                    registrar_movimiento("SALIDA", s_sel, c_sel, est_s, fv_s, cant, doc, cliente)
-                    st.success("✅ Despacho OK")
-
-    elif op == "♻️ Reclasificación":
-        df_i = leer_datos("inventario")
-        if not df_i.empty:
-            df_disp = df_i[pd.to_numeric(df_i['stock_actual']) > 0]
-            s_sel = st.selectbox("SKU:", sorted(df_disp['sku'].unique().astype(str)))
-            c_sel = st.selectbox("Contenedor:", sorted(df_disp[df_disp['sku'].astype(str)==s_sel]['contenedor'].unique().astype(str)))
-            df_f = df_disp[(df_disp['sku'].astype(str)==s_sel) & (df_disp['contenedor'].astype(str)==c_sel)]
-            est_orig = st.selectbox("Estado Actual:", df_f['estado'].unique())
-            fv_orig = st.selectbox("FV:", df_f['fecha_vencimiento'].unique())
-            with st.form("f_re"):
-                est_dest = st.selectbox("Nuevo Estado:", ["Disponible", "Distribuidores", "Merma", "Bandejas"])
-                cant = st.number_input("Cantidad:", min_value=1)
-                if st.form_submit_button("Cambiar"):
-                    actualizar_inventario(s_sel, c_sel, est_orig, fv_orig, -cant)
-                    actualizar_inventario(s_sel, c_sel, est_dest, fv_orig, cant)
-                    registrar_movimiento("RECLASIFICACION", s_sel, c_sel, est_dest, fv_orig, cant, f"De {est_orig} a {est_dest}")
-                    st.success("✅ Actualizado")
-
-elif menu == "📦 Reporte de Stock":
-    st.header("📦 Inventario Actual")
-    df_i = leer_datos("inventario")
-    if not df_i.empty:
-        df_i = formatear_fechas(df_i, 'fecha_vencimiento')
-        c1, c2 = st.columns(2)
-        f_cont = c1.multiselect("Contenedor:", sorted(df_i['contenedor'].unique().astype(str)))
-        f_sku = c2.text_input("SKU:")
-        if st.button("🔍 Buscar"):
-            res = df_i[pd.to_numeric(df_i['stock_actual']) > 0].copy()
-            if f_cont: res = res[res['contenedor'].astype(str).isin(f_cont)]
-            if f_sku: res = res[res['sku'].astype(str).str.contains(f_sku, case=False)]
-            st.dataframe(res[['sku', 'contenedor', 'estado', 'fecha_vencimiento_fmt', 'stock_actual']], use_container_width=True)
-
-elif menu == "🗑️ Reporte de Merma":
-    st.header("🗑️ Historial de Mermas")
-    df_m = leer_datos("movimientos")
-    if not df_m.empty:
-        df_m['estado_l'] = df_m['estado'].astype(str).str.strip().str.lower()
-        f_cont_m = st.multiselect("Contenedor:", sorted(df_m['contenedor'].unique().astype(str)))
-        if st.button("🔍 Ver"):
-            res = df_m[(df_m['estado_l'] == "merma") & (df_m['tipo_mov'].str.contains("INGRESO", na=False))].copy()
-            if f_cont_m: res = res[res['contenedor'].astype(str).isin(f_cont_m)]
-            st.warning(f"Total: {int(pd.to_numeric(res['cantidad']).sum())} unidades")
-            st.dataframe(res[['fecha_hora', 'sku', 'contenedor', 'cantidad', 'referencia']], use_container_width=True)
-
-elif menu == "📊 Reporte trazabilidad":  # <--- CORREGIDO AQUÍ
-    st.header("📊 Trazabilidad")
-    df_m = leer_datos("movimientos")
-    if not df_m.empty:
-        c1, c2, c3 = st.columns(3)
-        f_ini, f_fin = c1.date_input("Desde:", datetime.now()-timedelta(days=30)), c2.date_input("Hasta:", datetime.now())
-        f_cont_h = c3.multiselect("Contenedor:", sorted(df_m['contenedor'].unique().astype(str)))
-        f_sku_h = st.text_input("SKU:")
-        if st.button("🔍 Filtrar"):
-            df_m['dt'] = pd.to_datetime(df_m['fecha_hora'], errors='coerce', dayfirst=True)
-            mask = (df_m['dt'].dt.date >= f_ini) & (df_m['dt'].dt.date <= f_fin)
-            res = df_m[mask].copy()
-            if f_cont_h: res = res[res['contenedor'].astype(str).isin(f_cont_h)]
-            if f_sku_h: res = res[res['sku'].astype(str).str.contains(f_sku_h, case=False)]
-            st.dataframe(res[['fecha_hora', 'tipo_mov', 'sku', 'contenedor', 'estado','fecha_vencimiento', 'cantidad', 'referencia', 'cliente']], use_container_width=True)
-
-elif menu == "📋 Reporte PL":  # <--- CORREGIDO AQUÍ
-    st.header("📋 Cruce vs PL")
-    df_pl = leer_datos("packing_list")
-    df_mov = leer_datos("movimientos")
-    if not df_pl.empty:
-        cont_f = st.selectbox("Contenedor:", ["Todos"] + sorted(df_pl['contenedor'].unique().astype(str)))
-        if st.button("🔍 Comparar"):
-            real = df_mov[df_mov['tipo_mov']=="INGRESO_PL"].copy()
-            real['cantidad'] = pd.to_numeric(real['cantidad'], errors='coerce').fillna(0)
-            sum_r = real.groupby(['sku', 'contenedor'])['cantidad'].sum().reset_index()
-            sum_r.columns = ['sku', 'contenedor', 'cantidad_real']
-            res = pd.merge(df_pl, sum_r, on=['sku', 'contenedor'], how='left').fillna(0)
-            col_q = 'cantidad' if 'cantidad' in res.columns else 'cantidad_pl'
-            res['diferencia'] = res['cantidad_real'] - pd.to_numeric(res[col_q])
-            if cont_f != "Todos": res = res[res['contenedor'].astype(str) == cont_f]
-            st.dataframe(res, use_container_width=True)
-
-elif menu == "💡 Insights":
-    st.header("💡 Dashboard Estratégico")
-    df_i = leer_datos("inventario")
-    if not df_i.empty:
-        df_i['stock_actual'] = pd.to_numeric(df_i['stock_actual'], errors='coerce').fillna(0)
-        df_i['dt_venc'] = pd.to_datetime(df_i['fecha_vencimiento'], errors='coerce', dayfirst=True)
-        
-        # Filtro Sidebar
-        cont_filter = st.sidebar.selectbox("Filtrar por:", ["Todos"] + sorted(df_i['contenedor'].unique().astype(str)))
-        df_dash = df_i.copy() if cont_filter == "Todos" else df_i[df_i['contenedor'].astype(str) == cont_filter]
-
-        # KPIs superiores
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Stock Total", f"{int(df_dash['stock_actual'].sum()):,} uds")
-        k2.metric("SKUs Activos", df_dash['sku'].nunique())
-        k3.metric("Stock Merma", int(df_dash[df_dash['estado'].str.lower() == 'merma']['stock_actual'].sum()))
-        venc_60 = df_dash[(df_dash['dt_venc'] <= (datetime.now() + timedelta(days=60))) & (df_dash['stock_actual'] > 0)].shape[0]
-        k4.metric("Alertas Vencimiento", venc_60)
-
-        # Gráficos de barra
-        g1, g2 = st.columns(2)
-        with g1:
-            st.subheader("Distribución por Estado")
-            st.bar_chart(df_dash.groupby('estado')['stock_actual'].sum())
-        with g2:
-            st.subheader("Top 10 Contenedores")
-            st.bar_chart(df_dash.groupby('contenedor')['stock_actual'].sum().sort_values(ascending=False).head(10))
-
-        # Tabla de Vencimientos con estilo corregido
-        st.subheader("🚨 Vencimientos Próximos (Días)")
-        hoy = datetime.now()
-        df_v = df_dash[df_dash['stock_actual'] > 0].sort_values('dt_venc').copy()
-        
-        if not df_v.empty:
-            df_v['Días'] = (df_v['dt_venc'] - hoy).dt.days
-            display_venc = df_v[['sku', 'contenedor', 'estado', 'fecha_vencimiento', 'stock_actual', 'Días']].head(15)
-            
-            # Definición de colores
-            def apply_venc_color(s):
-                colors = []
-                for val in s:
-                    if pd.isna(val): colors.append('')
-                    elif val < 0: colors.append('background-color: #ff4b4b; color: black') # Rojo
-                    elif val < 30: colors.append('background-color: #ffa500; color: black') # Naranja
-                    elif val < 60: colors.append('background-color: #f9d71c; color: black') # Amarillo
-                    else: colors.append('')
-                return colors
-
-            # Aplicamos el estilo solo a la columna 'Días' para evitar errores de tipo con fechas
-            st.dataframe(display_venc.style.apply(apply_venc_color, subset=['Días']), use_container_width=True)
+    with st.expander("📋 Ver tabla pivoteada"):
+        if modo_total:
+            tabla = pivot.set_index("mes")[["unidades"]]
+            tabla.columns = ["Unidades"]
+            tabla["Unidades"] = tabla["Unidades"].apply(lambda v: f"{v:,}")
+            st.dataframe(tabla, use_container_width=True)
         else:
-            st.success("No hay stock próximo a vencer.")
+            tabla = pivot.pivot_table(
+                index="nombre_tienda", columns="mes", values="unidades",
+                aggfunc="sum", fill_value=0
+            )
+            cols_ord = [m for m in ORDEN_MESES if m in tabla.columns]
+            tabla = tabla[cols_ord]
+            tabla["TOTAL"] = tabla.sum(axis=1)
+            tabla = tabla.sort_values("TOTAL", ascending=False)
+            st.dataframe(tabla.style.format("{:,}"), use_container_width=True)
+
+
+def _render_heatmap(df):
+    st.markdown('<div class="titulo-seccion">🗺️ Mapa de calor tienda × mes</div>', unsafe_allow_html=True)
+
+    pivot = df.groupby(["nombre_tienda", "mes"])["unidades"].sum().reset_index()
+    tabla = pivot.pivot_table(index="nombre_tienda", columns="mes", values="unidades", fill_value=0)
+    cols_ord = [m for m in ORDEN_MESES if m in tabla.columns]
+    tabla = tabla[cols_ord]
+    tabla["TOTAL"] = tabla.sum(axis=1)
+    tabla = tabla.sort_values("TOTAL", ascending=False).drop(columns=["TOTAL"])
+
+    fig = px.imshow(
+        tabla,
+        color_continuous_scale=[
+            [0.0,  "#f0faf4"],
+            [0.25, "#85dcaa"],
+            [0.5,  "#3dbb7e"],
+            [0.75, "#c8e06a"],
+            [1.0,  "#e8a020"],
+        ],
+        aspect="auto",
+        text_auto=True,
+        labels=dict(color="Unidades"),
+    )
+    fig.update_traces(texttemplate="%{z:,}", textfont_size=11)
+    fig.update_layout(
+        height=max(350, len(tabla) * 32 + 80),
+        margin=dict(l=10, r=10, t=20, b=40),
+        coloraxis_showscale=False,
+        xaxis=dict(side="top", tickfont=dict(size=11)),
+        yaxis=dict(tickfont=dict(size=11)),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        font=dict(family="Arial", size=11, color="#2d3436"),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def render_dash_despachos():
+    df = cargar_despachos()
+
+    if df.empty:
+        st.warning("⚠️ Sin datos en CONSOLIDADO_DESPACHOS o error de conexión.")
+        return
+
+    columnas_req = {"sku", "unidades", "mes"}
+    faltantes = columnas_req - set(df.columns)
+    if faltantes:
+        st.error(f"❌ Columnas faltantes en el sheet: {', '.join(faltantes)}")
+        return
+
+    st.markdown('<div class="titulo-seccion">📊 Dashboard de Despachos</div>', unsafe_allow_html=True)
+    _render_metricas_despachos(df)
+    st.divider()
+    _render_top10(df)
+    st.divider()
+    _render_evolutivo(df)
+    st.divider()
+    _render_heatmap(df)
+
+
+# =========================================================
+# 4. FUNCIONES DE PROCESAMIENTO (IMPORTACIONES)
+# =========================================================
+
+def update_consolidado_arribo(doc, fecha):
+    try:
+        sh_cons = abrir_archivo_dinamico("Consolidado - Carcasas")
+        wks_cons = sh_cons.sheet1
+        all_data = wks_cons.get_all_values()
+        headers = [h.upper() for h in all_data[0]]
+
+        col_doc = headers.index("NOMBRE CORREO")
+        col_status = headers.index("STATUS")
+        col_fecha = headers.index("FCH LLEGADA")
+        col_recuento = headers.index("RECUENTO") if "RECUENTO" in headers else None
+
+        cells_to_update = []
+        filas_para_traspaso = []
+
+        for i, row in enumerate(all_data[1:], start=2):
+            if row[col_doc] == str(doc):
+                if col_recuento is not None and str(row[col_recuento]).strip() not in ["1", "1.0"]:
+                    continue
+                cells_to_update.append(gspread.Cell(i, col_status + 1, "ARRIBADO"))
+                cells_to_update.append(gspread.Cell(i, col_fecha + 1, str(fecha)))
+                filas_para_traspaso.append(row)
+
+        if cells_to_update:
+            wks_cons.update_cells(cells_to_update)
+
+            sh_rec = abrir_archivo_dinamico("RECEPCION_IMPORTACIONES")
+            wks_mov = sh_rec.worksheet("MOVIMIENTOS")
+
+            bulk_data = []
+            for row in filas_para_traspaso:
+                tienda = row[headers.index("TIENDA")].strip()
+                if tienda == "4298": dest, proc = "ALMACENAJE", "POR ALMACENAR"
+                else:
+                    dest = "TIENDA"
+                    es_ap = any("APERTURA" in str(row[headers.index(f"X{j}")]).upper()
+                                for j in range(1, 10) if f"X{j}" in headers)
+                    proc = "APERTURA" if es_ap else "POR DISTRIBUIR"
+
+                col_hora_fech_idx = headers.index("HORA FECH") if "HORA FECH" in headers else 0
+
+                bulk_data.append([
+                    row[headers.index("ID_DESPACHO")] if "ID_DESPACHO" in headers else row[0],
+                    row[col_doc], row[headers.index("ASN")], tienda,
+                    row[headers.index("CANTIDAD")], "Pendiente", str(fecha),
+                    row[col_hora_fech_idx], dest, proc, ""
+                ])
+            wks_mov.append_rows(bulk_data)
+            return True
+    except Exception as e:
+        st.error(f"Error técnico: {e}"); return False
+
+
+# =========================================================
+# 5. UI Y RENDERIZADO
+# =========================================================
+
+df_import, df_recep, df_tiendas = cargar_datos_completos()
+
+st.title("📦 Gestión de Importaciones")
+menu = st.sidebar.radio("MENÚ PRINCIPAL", [
+    "📦 Importaciones",
+    "🚚 Distribución",
+    "📊 Dash Despachos",
+])
+
+# ----------------------------------------------------------
+# MENÚ: IMPORTACIONES
+# ----------------------------------------------------------
+if menu == "📦 Importaciones":
+    tab_dash, tab_recep, tab_ops = st.tabs(["📊 Dash Importacion", "📑 Gestión interna", "⚙️ Operaciones"])
+
+    with tab_dash:
+        st.subheader("🏪 Próximas Aperturas")
+        if not df_tiendas.empty:
+            columnas_tiendas_req = ["ESTADO", "FCH ESTIMADA", "TIENDA", "DESCRIPCION"]
+            if all(col in df_tiendas.columns for col in columnas_tiendas_req):
+                df_ap = df_tiendas[df_tiendas["ESTADO"].str.upper().str.contains("PENDIENTE", na=False)].copy()
+                df_ap["FCH_DT"] = pd.to_datetime(df_ap["FCH ESTIMADA"], dayfirst=True, errors='coerce')
+                df_filtrado = df_ap[df_ap["FCH_DT"] >= datetime.now()].sort_values("FCH_DT").head(4)
+                cols = st.columns(4)
+                for i, (_, row) in enumerate(df_filtrado.iterrows()):
+                    with cols[i % 4]:
+                        st.markdown(f'''<div class="apertura-card">
+                            <div class="tienda-titulo">🏪 {row["TIENDA"]}</div>
+                            <div class="desc-tienda">{row["DESCRIPCION"]}</div>
+                            <div class="fecha-est">📅 {row.get("FCH ESTIMADA","")}</div>
+                        </div>''', unsafe_allow_html=True)
+            else:
+                st.warning("⚠️ Columnas faltantes en 'TIENDAS CARCASAS' (Requiere: ESTADO, FCH ESTIMADA, TIENDA, DESCRIPCION)")
+
+        st.markdown('<div class="titulo-seccion">STATUS GLOBAL</div>', unsafe_allow_html=True)
+        if not df_import.empty:
+            columnas_import_req = ["NOMBRE CORREO", "HORA FECH", "STATUS", "FCH LLEGADA"]
+            columnas_faltantes = [c for c in columnas_import_req if c not in df_import.columns]
+
+            if columnas_faltantes:
+                st.error(f"❌ **Estructura incorrecta en la hoja 'Consolidado - Carcasas':** Falta la(s) columna(s): {', '.join(columnas_faltantes)}")
+            else:
+                m1, m2, m3 = st.columns(3)
+                total = df_import["NOMBRE CORREO"].nunique()
+                arribados = df_import[df_import["STATUS"] == "ARRIBADO"]["NOMBRE CORREO"].nunique()
+                m1.metric("Total Docs", total)
+                m2.metric("Arribados", arribados)
+                m3.metric("En Tránsito", total - arribados)
+
+                st.divider()
+                c1, c2 = st.columns(2)
+                with c1:
+                    st.write("### ⏳ Pendientes")
+                    st.dataframe(df_import[df_import["STATUS"] != "ARRIBADO"].groupby(["NOMBRE CORREO", "HORA FECH", "STATUS"]).size().reset_index(name="ASNs"), use_container_width=True, hide_index=True)
+                with c2:
+                    st.write("### ✅ Arribados")
+                    st.dataframe(df_import[df_import["STATUS"] == "ARRIBADO"].groupby(["NOMBRE CORREO", "FCH LLEGADA"]).size().reset_index(name="ASNs"), use_container_width=True, hide_index=True)
+        else:
+            st.info("ℹ️ No hay registros con RECUENTO = 1, o la hoja está vacía.")
+
+    with tab_recep:
+        st.markdown("### 🗺️ Dash Recepción")
+        if not df_recep.empty:
+            columnas_recep_req = ["STATUS_REC", "IMPORTACION", "DESTINO", "PROCESO"]
+            if all(col in df_recep.columns for col in columnas_recep_req):
+                col1, col2, col3 = st.columns(3)
+                with col1:
+                    st.info("🚨 **PENDIENTE**")
+                    df_p = df_recep[df_recep["STATUS_REC"].str.upper() == "PENDIENTE"]
+                    if not df_p.empty:
+                        st.dataframe(df_p.groupby(["IMPORTACION", "DESTINO", "PROCESO"]).size().reset_index(name="BULTOS"), use_container_width=True, hide_index=True)
+                with col2:
+                    st.success("🏢 **EN STOCK**")
+                    df_s = df_recep[df_recep["STATUS_REC"].str.upper() == "ALMACENADO"]
+                    if not df_s.empty:
+                        st.dataframe(df_s.groupby(["IMPORTACION", "DESTINO"]).size().reset_index(name="BULTOS"), use_container_width=True, hide_index=True)
+                with col3:
+                    st.warning("🚚 **PROGRAMADO / ENTREGADO**")
+                    df_pe = df_recep[df_recep["STATUS_REC"].str.upper().isin(["PROGRAMADO", "ENTREGADO"])]
+                    if not df_pe.empty and "FECHA ENTREGA" in df_recep.columns:
+                        st.dataframe(df_pe.groupby(["FECHA ENTREGA", "IMPORTACION", "STATUS_REC"]).size().reset_index(name="BULTOS"), use_container_width=True, hide_index=True)
+            else:
+                st.warning("⚠️ Estructura incorrecta en la hoja 'RECEPCION_IMPORTACIONES'.")
+
+    with tab_ops:
+        st.header("⚙️ Operaciones")
+        @st.fragment
+        def ops_panel():
+            o1, o2 = st.columns(2)
+            with o1:
+                st.subheader("Confirmar Arribo")
+                docs = df_import["NOMBRE CORREO"].unique().tolist() if not df_import.empty and "NOMBRE CORREO" in df_import.columns else []
+                if "STATUS" in df_import.columns:
+                    docs = df_import[df_import["STATUS"] != "ARRIBADO"]["NOMBRE CORREO"].unique().tolist()
+
+                with st.form("arribo_f", clear_on_submit=True):
+                    d = st.selectbox("Documento", docs)
+                    f = st.date_input("Fecha LLegada", date.today())
+                    if st.form_submit_button("Registrar Arribo"):
+                        if update_consolidado_arribo(d, f):
+                            st.toast("¡Arribo registrado!", icon="✅")
+                            st.cache_data.clear(); st.rerun()
+            with o2:
+                st.subheader("Confirmar Stock")
+                if not df_recep.empty and "STATUS_REC" in df_recep.columns and "ASN" in df_recep.columns:
+                    asns = df_recep[df_recep["STATUS_REC"].str.upper() == "PENDIENTE"]["ASN"].unique().tolist()
+                    with st.form("stock_f", clear_on_submit=True):
+                        a = st.selectbox("ASN", asns)
+                        if st.form_submit_button("Confirmar Ingreso"):
+                            try:
+                                sh_r = abrir_archivo_dinamico("RECEPCION_IMPORTACIONES")
+                                w_m = sh_r.worksheet("MOVIMIENTOS")
+                                cell = w_m.find(str(a))
+                                w_m.update_cell(cell.row, 6, "ALMACENADO")
+                                st.toast("Stock actualizado", icon="🏢")
+                                st.cache_data.clear(); st.rerun()
+                            except: st.error("ASN no encontrado o error de red")
+        ops_panel()
+
+# ----------------------------------------------------------
+# MENÚ: DISTRIBUCIÓN
+# ----------------------------------------------------------
+if menu == "🚚 Distribución":
+    st.info("Módulo de distribución — agrega aquí tu código existente.")
+
+# ----------------------------------------------------------
+# MENÚ: DASH DESPACHOS
+# ----------------------------------------------------------
+if menu == "📊 Dash Despachos":
+    render_dash_despachos()
+
+# ----------------------------------------------------------
+# SINCRONIZAR
+# ----------------------------------------------------------
+if st.sidebar.button("🔄 Sincronizar Todo"):
+    st.cache_data.clear(); st.rerun()
