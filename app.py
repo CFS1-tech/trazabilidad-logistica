@@ -140,46 +140,84 @@ def calcular_stock(
     ].copy()
 
     if excluir_tipos:
+
         sub = sub[
             ~sub["TIPO DE MOVIMIENTO"].isin(
                 excluir_tipos
             )
         ]
 
+    # LIMPIAR
+    sub["SKU MASEF"] = (
+        sub["SKU MASEF"]
+        .astype(str)
+        .str.strip()
+    )
+
+    sub["CTN"] = (
+        sub["CTN"]
+        .astype(str)
+        .str.strip()
+    )
+
+    sub["ESTADO"] = (
+        sub["ESTADO"]
+        .astype(str)
+        .str.strip()
+    )
+
+    sub["DESCRIPTION"] = (
+        sub["DESCRIPTION"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # AGRUPAR SOLO POR CAMPOS REALES DE STOCK
     stk = (
         sub
         .groupby(
-            ["SKU MASEF", "DESCRIPTION"]
+            [
+                "SKU MASEF",
+                "CTN",
+                "ESTADO",
+                "FECHA VCTO"
+            ],
+            dropna=False
         )["TOTAL UNIT"]
         .sum()
-        .rename("Stock")
         .reset_index()
     )
 
-    ultima = (
+    stk = stk.rename(
+        columns={
+            "TOTAL UNIT": "Stock"
+        }
+    )
+
+    # OBTENER DESCRIPCIÓN
+    desc = (
         sub
-        .sort_values("FECHA")
-        .groupby(
-            ["SKU MASEF", "DESCRIPTION"]
-        )[["CTN", "ESTADO", "FECHA VCTO"]]
+        .groupby("SKU MASEF")["DESCRIPTION"]
         .last()
         .reset_index()
     )
 
     result = stk.merge(
-        ultima,
-        on=["SKU MASEF", "DESCRIPTION"],
+        desc,
+        on="SKU MASEF",
         how="left"
     )
 
-    result["Stock"] = result["Stock"].astype(int)
+    result["Stock"] = (
+        result["Stock"]
+        .fillna(0)
+        .astype(int)
+    )
 
+    # SOLO POSITIVOS
     result = result[
         result["Stock"] > 0
-    ].sort_values(
-        "Stock",
-        ascending=False
-    )
+    ]
 
     result["FECHA VCTO"] = (
         pd.to_datetime(
@@ -188,6 +226,11 @@ def calcular_stock(
         )
         .dt.strftime("%Y-%m-%d")
         .fillna("")
+    )
+
+    result = result.sort_values(
+        "Stock",
+        ascending=False
     )
 
     return result.reset_index(drop=True)
@@ -489,12 +532,12 @@ if vista == "📦  Stock":
             "Stock",
         ]
     ].rename(columns={
-
+    
         "SKU MASEF": "SKU",
         "DESCRIPTION": "Descripción",
         "FECHA VCTO": "Vencimiento",
         "Stock": "Unidades en Stock",
-
+    
     })
 
     max_stock = (
