@@ -169,6 +169,35 @@ def calcular_stock(
         .str.strip()
     )
 
+    sub["DESCRIPTION"] = (
+        sub["DESCRIPTION"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # ─────────────────────────────────────────────
+    # MATRIZ SKU -> DESCRIPCIÓN
+    # ─────────────────────────────────────────────
+
+    matriz_sku = (
+        sub[
+            ["SKU MASEF", "DESCRIPTION"]
+        ]
+        .dropna()
+        .copy()
+    )
+
+    matriz_sku = matriz_sku[
+        matriz_sku["DESCRIPTION"] != ""
+    ]
+
+    matriz_sku = (
+        matriz_sku
+        .drop_duplicates(
+            subset=["SKU MASEF"]
+        )
+    )
+
     # ─────────────────────────────────────────────
     # STOCK REAL
     # ─────────────────────────────────────────────
@@ -208,11 +237,11 @@ def calcular_stock(
     )
 
     # ─────────────────────────────────────────────
-    # AGREGAR DESCRIPCIÓN MAESTRA
+    # AGREGAR DESCRIPCIÓN
     # ─────────────────────────────────────────────
 
     result = result.merge(
-        st.session_state["matriz_sku"],
+        matriz_sku,
         on="SKU MASEF",
         how="left"
     )
