@@ -147,7 +147,7 @@ def calcular_stock(
             )
         ]
 
-    # LIMPIAR
+    # LIMPIAR CAMPOS
     sub["SKU MASEF"] = (
         sub["SKU MASEF"]
         .astype(str)
@@ -172,8 +172,8 @@ def calcular_stock(
         .str.strip()
     )
 
-    # AGRUPAR SOLO POR CAMPOS REALES DE STOCK
-    stk = (
+    # AGRUPAR STOCK REAL
+    result = (
         sub
         .groupby(
             [
@@ -183,41 +183,29 @@ def calcular_stock(
                 "FECHA VCTO"
             ],
             dropna=False
-        )["TOTAL UNIT"]
-        .sum()
+        )
+        .agg({
+            "TOTAL UNIT": "sum",
+            "DESCRIPTION": "last"
+        })
         .reset_index()
     )
 
-    stk = stk.rename(
+    result = result.rename(
         columns={
             "TOTAL UNIT": "Stock"
         }
     )
 
-    # OBTENER DESCRIPCIÓN
-    desc = (
-        sub
-        .groupby("SKU MASEF")["DESCRIPTION"]
-        .last()
-        .reset_index()
-    )
-
-    result = stk.merge(
-        desc,
-        on="SKU MASEF",
-        how="left"
-    )
-
-    result["Stock"] = (
-        result["Stock"]
-        .fillna(0)
-        .astype(int)
-    )
-
-    # SOLO POSITIVOS
+    # SOLO LOS QUE QUEDARON CON STOCK
     result = result[
         result["Stock"] > 0
     ]
+
+    result["Stock"] = (
+        result["Stock"]
+        .astype(int)
+    )
 
     result["FECHA VCTO"] = (
         pd.to_datetime(
