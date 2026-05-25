@@ -144,11 +144,17 @@ if vista == "📦  Stock":
     total_entradas = int(sub_global[sub_global["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
     total_salidas  = int(sub_global[sub_global["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
 
-    # Stock neto por estado usando calcular_stock (solo positivos)
-    stock_global = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
-    por_estado   = stock_global.groupby("ESTADO")["Stock"].sum()
-    por_estado   = por_estado[por_estado > 0]
-    total_neto   = int(stock_global["Stock"].sum())
+    # Stock neto por estado:
+    # 1) calcular neto por SKU (agrupa todo)
+    # 2) filtrar SKUs con stock > 0
+    # 3) calcular por estado sobre esos SKUs
+    df_sm = df[df["ESTADO"] != "MERMA"]
+    neto_sku = df_sm.groupby("SKU MASEF")["TOTAL UNIT"].sum()
+    skus_positivos = neto_sku[neto_sku > 0].index
+    df_positivos = df_sm[df_sm["SKU MASEF"].isin(skus_positivos)]
+    por_estado = df_positivos[df_positivos["FECHA"].dt.date <= date.today()].groupby("ESTADO")["TOTAL UNIT"].sum()
+    por_estado = por_estado[por_estado > 0]
+    total_neto = int(por_estado.sum())
 
     cols_metrics = st.columns(1 + len(por_estado))
     cols_metrics[0].metric("Total en stock", f"{total_neto:,}")
