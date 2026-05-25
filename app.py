@@ -173,7 +173,6 @@ def calcular_stock(
     )
 
     # AGRUPAR STOCK REAL
-    # STOCK REAL
     result = (
         sub
         .groupby(
@@ -184,30 +183,12 @@ def calcular_stock(
                 "FECHA VCTO"
             ],
             dropna=False
-        )["TOTAL UNIT"]
-        .sum()
+        )
+        .agg({
+            "TOTAL UNIT": "sum",
+            "DESCRIPTION": "last"
+        })
         .reset_index()
-    )
-    
-    result = result.rename(
-        columns={
-            "TOTAL UNIT": "Stock"
-        }
-    )
-    
-    # TOMAR SOLO UNA DESCRIPCIÓN POR SKU
-    desc = (
-        sub
-        .groupby("SKU MASEF")["DESCRIPTION"]
-        .first()
-        .reset_index()
-    )
-    
-    # AGREGAR DESCRIPCIÓN SIN DUPLICAR
-    result = result.merge(
-        desc,
-        on="SKU MASEF",
-        how="left"
     )
 
     result = result.rename(
