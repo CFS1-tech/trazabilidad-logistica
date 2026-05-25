@@ -524,20 +524,7 @@ if vista == "📦  Stock":
         display,
         "stock"
     )
-# ══════════════════════════════════════════════════════════════════════════════
-# VISTA: TRAZABILIDAD
-# ══════════════════════════════════════════════════════════════════════════════
 
-elif vista == "🔍  Trazabilidad":
-
-    st.markdown("## 🔍 Reporte de Trazabilidad")
-
-    st.caption(
-        "Base completa de movimientos registrada en Google Sheets."
-    )
-
-    # ── Filtros ──
-    with st.form("form_trazabilidad"):
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: TRAZABILIDAD
 # ══════════════════════════════════════════════════════════════════════════════
