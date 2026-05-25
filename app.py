@@ -222,6 +222,7 @@ def calcular_stock(
     )
 
     return result.reset_index(drop=True)
+    
 
 def to_excel(df_export: pd.DataFrame) -> bytes:
 
