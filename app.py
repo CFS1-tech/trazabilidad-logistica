@@ -280,6 +280,10 @@ except Exception as e:
 # VISTA: STOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: STOCK
+# ══════════════════════════════════════════════════════════════════════════════
+
 if vista == "📦  Stock":
 
     st.markdown("## 📦 Reporte de Stock")
@@ -288,82 +292,7 @@ if vista == "📦  Stock":
         "Stock acumulado hasta la fecha de corte."
     )
 
-    # STOCK REAL
-    sub_global = df[
-        df["FECHA"].dt.date <= date.today()
-    ].copy()
-
-    total_entradas = int(
-        sub_global[
-            sub_global["TOTAL UNIT"] > 0
-        ]["TOTAL UNIT"].sum()
-    )
-
-    total_salidas = int(
-        sub_global[
-            sub_global["TOTAL UNIT"] < 0
-        ]["TOTAL UNIT"].sum() * -1
-    )
-
-    df_sm = df.copy()
-
-    neto_sku = (
-        df_sm
-        .groupby("SKU MASEF")["TOTAL UNIT"]
-        .sum()
-    )
-
-    skus_positivos = neto_sku[
-        neto_sku > 0
-    ].index
-
-    total_neto = int(
-        neto_sku[
-            neto_sku > 0
-        ].sum()
-    )
-
-    df_positivos = df_sm[
-        df_sm["SKU MASEF"].isin(
-            skus_positivos
-        )
-    ]
-
-    # SOLO ocultar visualmente MERMA
-    df_positivos = df_positivos[
-        df_positivos["ESTADO"] != "MERMA"
-    ]
-
-    por_estado = (
-        df_positivos
-        .groupby("ESTADO")["TOTAL UNIT"]
-        .sum()
-    )
-
-    por_estado = por_estado[
-        por_estado > 0
-    ]
-
-    cols_metrics = st.columns(
-        1 + len(por_estado)
-    )
-
-    cols_metrics[0].metric(
-        "Total en stock",
-        f"{total_neto:,}"
-    )
-
-    for i, (estado, unidades) in enumerate(
-        por_estado.items()
-    ):
-
-        cols_metrics[1 + i].metric(
-            estado,
-            f"{int(unidades):,}"
-        )
-
-    st.divider()
-
+    # ── Filtros ──
     with st.form("form_stock"):
 
         col1, col2, col3, col4 = st.columns(
@@ -410,7 +339,90 @@ if vista == "📦  Stock":
                 use_container_width=True
             )
 
+    # ─────────────────────────────────────────────────────────────
+    # STOCK REAL HASTA FECHA FILTRADA
+    # ─────────────────────────────────────────────────────────────
+
+    sub_global = df[
+        df["FECHA"].dt.date <= fecha_corte
+    ].copy()
+
+    total_entradas = int(
+        sub_global[
+            sub_global["TOTAL UNIT"] > 0
+        ]["TOTAL UNIT"].sum()
+    )
+
+    total_salidas = int(
+        sub_global[
+            sub_global["TOTAL UNIT"] < 0
+        ]["TOTAL UNIT"].sum() * -1
+    )
+
+    # Stock neto REAL por SKU
+    neto_sku = (
+        sub_global
+        .groupby("SKU MASEF")["TOTAL UNIT"]
+        .sum()
+    )
+
+    # Solo SKUs positivos
+    skus_positivos = neto_sku[
+        neto_sku > 0
+    ].index
+
+    total_neto = int(
+        neto_sku[
+            neto_sku > 0
+        ].sum()
+    )
+
+    df_positivos = sub_global[
+        sub_global["SKU MASEF"].isin(
+            skus_positivos
+        )
+    ].copy()
+
+    # SOLO ocultar MERMA visualmente
+    df_positivos = df_positivos[
+        df_positivos["ESTADO"] != "MERMA"
+    ]
+
+    por_estado = (
+        df_positivos
+        .groupby("ESTADO")["TOTAL UNIT"]
+        .sum()
+    )
+
+    por_estado = por_estado[
+        por_estado > 0
+    ]
+
+    # ── Métricas ──
+    cols_metrics = st.columns(
+        1 + len(por_estado)
+    )
+
+    cols_metrics[0].metric(
+        "Total en stock",
+        f"{total_neto:,}"
+    )
+
+    for i, (estado, unidades) in enumerate(
+        por_estado.items()
+    ):
+
+        cols_metrics[1 + i].metric(
+            estado,
+            f"{int(unidades):,}"
+        )
+
+    st.divider()
+
+    # ─────────────────────────────────────────────────────────────
     # CALCULAR STOCK REAL
+    # ─────────────────────────────────────────────────────────────
+
     stock_df = calcular_stock(
         df,
         fecha_corte
@@ -421,6 +433,7 @@ if vista == "📦  Stock":
         stock_df["ESTADO"] != "MERMA"
     ]
 
+    # ── Buscar ──
     if buscar:
 
         mask = (
@@ -439,12 +452,14 @@ if vista == "📦  Stock":
 
         stock_df = stock_df[mask]
 
+    # ── Estado ──
     if f_estado != "Todos":
 
         stock_df = stock_df[
             stock_df["ESTADO"] == f_estado
         ]
 
+    # ── Tabla ──
     st.markdown(
         f"**Detalle de stock** — {len(stock_df)} SKUs"
     )
