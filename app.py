@@ -108,6 +108,25 @@ def cargar_datos() -> pd.DataFrame:
 
     return df.dropna(subset=["FECHA"])
 
+@st.cache_data(ttl=300)
+
+def cargar_packinglist() -> pd.DataFrame:
+
+    client = get_client()
+
+    sh = client.open_by_key(
+        st.secrets["spreadsheet_id"]
+    )
+
+    ws = sh.worksheet("PACKINGLIST")
+
+    df_pk = pd.DataFrame(
+        ws.get_all_records()
+    )
+
+    return df_pk
+
+
 def calcular_stock(
     df: pd.DataFrame,
     fecha_corte,
@@ -235,6 +254,7 @@ with st.sidebar:
     vista = st.radio("", [
         "📦  Stock",
         "🔍  Trazabilidad",
+        "📦  Packing List",
         "⚠️  Merma",
     ], label_visibility="collapsed")
 
@@ -262,7 +282,7 @@ with st.sidebar:
 try:
 
     df = cargar_datos()
-
+    packing_df = cargar_packinglist()
 except Exception as e:
 
     st.error(
@@ -518,8 +538,21 @@ elif vista == "🔍  Trazabilidad":
 
     # ── Filtros ──
     with st.form("form_trazabilidad"):
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: TRAZABILIDAD
+# ══════════════════════════════════════════════════════════════════════════════
 
-        col1, col2, col3 = st.columns(3)
+elif vista == "🔍  Trazabilidad":
+
+    st.markdown("## 🔍 Reporte de Trazabilidad")
+
+    st.caption(
+        "Base completa de movimientos."
+    )
+
+    with st.form("form_trazabilidad"):
+
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
 
@@ -558,8 +591,6 @@ elif vista == "🔍  Trazabilidad":
                 value=df["FECHA"].min().date()
             )
 
-        col4, col5 = st.columns([2, 1])
-
         with col4:
 
             fecha_hasta = st.date_input(
@@ -567,17 +598,11 @@ elif vista == "🔍  Trazabilidad":
                 value=date.today()
             )
 
-        with col5:
+        st.form_submit_button(
+            "🔍 Buscar",
+            use_container_width=True
+        )
 
-            st.write("")
-            st.write("")
-
-            st.form_submit_button(
-                "🔍 Buscar",
-                use_container_width=True
-            )
-
-    # ── Filtrar ──
     traz = df.copy()
 
     if f_ctn != "Todos":
@@ -607,7 +632,6 @@ elif vista == "🔍  Trazabilidad":
         ascending=False
     )
 
-    # ── Métricas ──
     m1, m2, m3 = st.columns(3)
 
     m1.metric(
@@ -621,51 +645,27 @@ elif vista == "🔍  Trazabilidad":
     )
 
     m3.metric(
-        "Contenedores",
+        "CTNs",
         f"{traz['CTN'].nunique():,}"
     )
 
     st.divider()
 
-    # ── Tabla ──
     traz_display = traz.copy()
 
-    traz_display["FECHA"] = (
-        traz_display["FECHA"]
-        .dt.strftime("%Y-%m-%d")
-    )
+    for col in traz_display.columns:
 
-    traz_display["FECHA VCTO"] = (
-        pd.to_datetime(
-            traz_display["FECHA VCTO"],
-            errors="coerce"
-        )
-        .dt.strftime("%Y-%m-%d")
-        .fillna("")
-    )
+        if "FECHA" in col.upper():
 
-    columnas = [
-        "FECHA",
-        "CTN",
-        "SKU MASEF",
-        "DESCRIPTION",
-        "TIPO DE MOVIMIENTO",
-        "ESTADO",
-        "TOTAL UNIT",
-        "FECHA VCTO"
-    ]
+            try:
 
-    traz_display = traz_display[
-        columnas
-    ].rename(columns={
+                traz_display[col] = pd.to_datetime(
+                    traz_display[col],
+                    errors="coerce"
+                ).dt.strftime("%Y-%m-%d")
 
-        "SKU MASEF": "SKU",
-        "DESCRIPTION": "Descripción",
-        "TIPO DE MOVIMIENTO": "Movimiento",
-        "TOTAL UNIT": "Unidades",
-        "FECHA VCTO": "Vencimiento"
-
-    })
+            except:
+                pass
 
     st.dataframe(
         traz_display,
@@ -677,6 +677,113 @@ elif vista == "🔍  Trazabilidad":
         traz_display,
         "trazabilidad"
     )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: PACKING LIST
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "📦  Packing List":
+
+    st.markdown("## 📦 Reporte Packing List")
+
+    st.caption(
+        "Base completa de la hoja PACKINGLIST."
+    )
+
+    with st.form("form_packing"):
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            columnas_ctn = [
+                c for c in packing_df.columns
+                if "CTN" in c.upper()
+                or "CONTENEDOR" in c.upper()
+            ]
+
+            col_ctn = columnas_ctn[0] if columnas_ctn else packing_df.columns[0]
+
+            ctns = ["Todos"] + sorted(
+                packing_df[col_ctn]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_ctn = st.selectbox(
+                "📦 Contenedor",
+                ctns
+            )
+
+        with col2:
+
+            columnas_sku = [
+                c for c in packing_df.columns
+                if "SKU" in c.upper()
+            ]
+
+            col_sku = columnas_sku[0] if columnas_sku else packing_df.columns[0]
+
+            skus = ["Todos"] + sorted(
+                packing_df[col_sku]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_sku = st.selectbox(
+                "🏷️ SKU",
+                skus
+            )
+
+        st.form_submit_button(
+            "🔍 Buscar",
+            use_container_width=True
+        )
+
+    pk = packing_df.copy()
+
+    if f_ctn != "Todos":
+
+        pk = pk[
+            pk[col_ctn].astype(str) == str(f_ctn)
+        ]
+
+    if f_sku != "Todos":
+
+        pk = pk[
+            pk[col_sku].astype(str) == str(f_sku)
+        ]
+
+    m1, m2 = st.columns(2)
+
+    m1.metric(
+        "Registros",
+        f"{len(pk):,}"
+    )
+
+    m2.metric(
+        "SKUs",
+        f"{pk[col_sku].nunique():,}"
+    )
+
+    st.divider()
+
+    st.dataframe(
+        pk,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    botones_descarga(
+        pk,
+        "packinglist"
+    )
+
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: MERMA
