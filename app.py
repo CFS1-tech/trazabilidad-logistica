@@ -147,7 +147,10 @@ def calcular_stock(
             )
         ]
 
+    # ─────────────────────────────────────────────
     # LIMPIAR CAMPOS
+    # ─────────────────────────────────────────────
+
     sub["SKU MASEF"] = (
         sub["SKU MASEF"]
         .astype(str)
@@ -166,13 +169,10 @@ def calcular_stock(
         .str.strip()
     )
 
-    sub["DESCRIPTION"] = (
-        sub["DESCRIPTION"]
-        .astype(str)
-        .str.strip()
-    )
+    # ─────────────────────────────────────────────
+    # STOCK REAL
+    # ─────────────────────────────────────────────
 
-    # AGRUPAR STOCK REAL
     result = (
         sub
         .groupby(
@@ -183,11 +183,8 @@ def calcular_stock(
                 "FECHA VCTO"
             ],
             dropna=False
-        )
-        .agg({
-            "TOTAL UNIT": "sum",
-            "DESCRIPTION": "last"
-        })
+        )["TOTAL UNIT"]
+        .sum()
         .reset_index()
     )
 
@@ -197,7 +194,10 @@ def calcular_stock(
         }
     )
 
-    # SOLO LOS QUE QUEDARON CON STOCK
+    # ─────────────────────────────────────────────
+    # SOLO STOCK POSITIVO
+    # ─────────────────────────────────────────────
+
     result = result[
         result["Stock"] > 0
     ]
@@ -206,6 +206,20 @@ def calcular_stock(
         result["Stock"]
         .astype(int)
     )
+
+    # ─────────────────────────────────────────────
+    # AGREGAR DESCRIPCIÓN MAESTRA
+    # ─────────────────────────────────────────────
+
+    result = result.merge(
+        st.session_state["matriz_sku"],
+        on="SKU MASEF",
+        how="left"
+    )
+
+    # ─────────────────────────────────────────────
+    # FORMATEAR FECHA
+    # ─────────────────────────────────────────────
 
     result["FECHA VCTO"] = (
         pd.to_datetime(
