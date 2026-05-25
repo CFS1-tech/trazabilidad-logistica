@@ -38,8 +38,17 @@ def cargar_datos() -> pd.DataFrame:
     sh  = client.open_by_key(st.secrets["spreadsheet_id"])
     ws  = sh.worksheet(SHEET_NAME)
     df  = pd.DataFrame(ws.get_all_records())
-    df["FECHA"]      = pd.to_datetime(df["FECHA"], errors="coerce")
-    df["FECHA VCTO"] = pd.to_datetime(df["FECHA VCTO"], errors="coerce")
+    # Parsear fechas — el Sheet usa formato D/M/YYYY
+    def parse_fecha(col):
+        parsed = pd.to_datetime(col, dayfirst=True, errors="coerce")
+        # Para fechas que fallaron, intentar formato alternativo
+        mask = parsed.isna() & col.astype(str).str.strip().ne("")
+        if mask.any():
+            parsed[mask] = pd.to_datetime(col[mask], format="%Y-%m-%d", errors="coerce")
+        return parsed
+
+    df["FECHA"]      = parse_fecha(df["FECHA"].astype(str))
+    df["FECHA VCTO"] = parse_fecha(df["FECHA VCTO"].astype(str))
     df["TOTAL UNIT"] = pd.to_numeric(df["TOTAL UNIT"], errors="coerce").fillna(0).astype(int)
     df["SKU MASEF"]  = df["SKU MASEF"].astype(str)
     df["CTN"]        = df["CTN"].astype(str)
@@ -89,6 +98,13 @@ except Exception as e:
     st.error(f"❌ Error conectando a Google Sheets: {e}")
     st.stop()
 
+
+# DEBUG temporal
+with st.expander("🔧 Debug info"):
+    st.write("Filas leídas:", len(df))
+    st.write("Suma TOTAL UNIT:", df["TOTAL UNIT"].sum())
+    st.write("Fechas nulas:", df["FECHA"].isna().sum())
+    st.write("Muestra FECHA (primeras 3):", df["FECHA"].head(3).tolist())
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: STOCK
 # ══════════════════════════════════════════════════════════════════════════════
