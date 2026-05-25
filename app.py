@@ -67,23 +67,19 @@ def cargar_datos() -> pd.DataFrame:
 def calcular_stock(df: pd.DataFrame, fecha_corte) -> pd.DataFrame:
     sub = df[df["FECHA"] <= pd.to_datetime(fecha_corte)].copy()
 
-    # Signo: entradas suman, salidas restan
-    sub["delta"] = sub.apply(
-        lambda r: r["TOTAL UNIT"] if r["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_ENTRADA
-        else -r["TOTAL UNIT"] if r["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_SALIDA
-        else 0,
-        axis=1
-    )
+    # Los valores en el Sheet ya vienen con signo:
+    # entradas en positivo, salidas/ajustes/mermas en negativo
+    # Solo sumamos TOTAL UNIT directamente
 
-    # Stock neto por SKU (para el total correcto)
+    # Stock neto por SKU
     stk_sku = (
-        sub.groupby(["SKU MASEF", "DESCRIPTION"])["delta"]
+        sub.groupby(["SKU MASEF", "DESCRIPTION"])["TOTAL UNIT"]
         .sum()
         .rename("Stock")
         .reset_index()
     )
 
-    # Última info de CTN, ESTADO, FECHA VCTO por SKU (para mostrar en tabla)
+    # Última info de CTN, ESTADO, FECHA VCTO por SKU
     ultima_info = (
         sub.sort_values("FECHA")
         .groupby(["SKU MASEF", "DESCRIPTION"])[["CTN", "ESTADO", "FECHA VCTO"]]
@@ -160,11 +156,11 @@ if vista == "📦 Stock":
         )
         stock_df = stock_df[mask]
 
-    # Métricas
+    # Métricas — TOTAL UNIT ya viene con signo en el Sheet
     sub_corte = df[df["FECHA"] <= pd.to_datetime(fecha_corte)]
-    total_entradas = int(sub_corte[sub_corte["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_ENTRADA)]["TOTAL UNIT"].sum())
-    total_salidas  = int(sub_corte[sub_corte["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_SALIDA)]["TOTAL UNIT"].sum())
-    stock_neto     = total_entradas - total_salidas
+    stock_neto     = int(sub_corte["TOTAL UNIT"].sum())
+    total_entradas = int(sub_corte[sub_corte["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
+    total_salidas  = int(sub_corte[sub_corte["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("SKUs con stock",  stock_df["SKU MASEF"].nunique())
