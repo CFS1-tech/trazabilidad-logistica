@@ -119,6 +119,8 @@ with st.sidebar:
 # ── Carga de datos ────────────────────────────────────────────────────────────
 try:
     df = cargar_datos()
+    st.write("Filas leídas:", len(df))
+    st.write("Suma TOTAL UNIT:", df["TOTAL UNIT"].sum())
 except Exception as e:
     st.error(f"❌ Error conectando a Google Sheets: {e}")
     st.info("Verifica que `st.secrets` tenga `gcp_service_account` y `spreadsheet_id`.")
