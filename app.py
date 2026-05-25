@@ -162,11 +162,15 @@ if vista == "📦 Stock":
 
     # Métricas
     sub_corte = df[df["FECHA"] <= pd.to_datetime(fecha_corte)]
+    total_entradas = int(sub_corte[sub_corte["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_ENTRADA)]["TOTAL UNIT"].sum())
+    total_salidas  = int(sub_corte[sub_corte["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_SALIDA)]["TOTAL UNIT"].sum())
+    stock_neto     = total_entradas - total_salidas
+
     m1, m2, m3, m4 = st.columns(4)
-    m1.metric("SKUs con stock",    stock_df["SKU MASEF"].nunique())
-    m2.metric("Total unidades",    f"{stock_df['Stock'].sum():,}")
-    m3.metric("Ingresos acum.",    f"{sub_corte[sub_corte['TIPO DE MOVIMIENTO']=='INGRESO']['TOTAL UNIT'].sum():,}")
-    m4.metric("Salidas acum.",     f"{sub_corte[sub_corte['TIPO DE MOVIMIENTO']=='SALIDA']['TOTAL UNIT'].sum():,}")
+    m1.metric("SKUs con stock",  stock_df["SKU MASEF"].nunique())
+    m2.metric("Total unidades",  f"{stock_neto:,}")
+    m3.metric("Entradas acum.",  f"{total_entradas:,}")
+    m4.metric("Salidas acum.",   f"{total_salidas:,}")
 
     st.divider()
 
