@@ -56,7 +56,7 @@ def cargar_datos() -> pd.DataFrame:
 
 def calcular_stock(df: pd.DataFrame, fecha_corte) -> pd.DataFrame:
     corte = pd.to_datetime(fecha_corte)
-    sub   = df[df["FECHA"] <= corte + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)].copy()
+    sub   = df[df["FECHA"].dt.date <= corte.date()].copy()
     stk_sku = (
         sub.groupby(["SKU MASEF", "DESCRIPTION"])["TOTAL UNIT"]
         .sum().rename("Stock").reset_index()
@@ -139,7 +139,7 @@ if vista == "📦 Stock":
         stock_df = stock_df[mask]
 
     # Métricas
-    sub_corte      = df[df["FECHA"] <= pd.to_datetime(fecha_corte) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1)]
+    sub_corte      = df[df["FECHA"].dt.date <= pd.to_datetime(fecha_corte).date()]
     stock_neto     = int(stock_df["Stock"].sum())
     total_entradas = int(sub_corte[sub_corte["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
     total_salidas  = int(sub_corte[sub_corte["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
@@ -248,7 +248,7 @@ elif vista == "🔍 Trazabilidad":
     if f_tipo != "Todos": result = result[result["TIPO DE MOVIMIENTO"] == f_tipo]
     result = result[
         (result["FECHA"] >= pd.to_datetime(f_desde)) &
-        (result["FECHA"] <= pd.to_datetime(f_hasta) + pd.Timedelta(days=1) - pd.Timedelta(seconds=1))
+        (result["FECHA"] <= pd.to_datetime(f_hasta))
     ].sort_values("FECHA", ascending=False)
 
     # Métricas
