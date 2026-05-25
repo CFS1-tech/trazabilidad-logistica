@@ -76,14 +76,15 @@ def calcular_stock(df: pd.DataFrame, fecha_corte) -> pd.DataFrame:
 
     sub["delta"] = sub.apply(delta, axis=1)
 
-    ent = (sub[sub["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_ENTRADA)]
-           .groupby(["SKU MASEF", "DESCRIPTION"])["TOTAL UNIT"].sum().rename("Ingresos"))
-    sal = (sub[sub["TIPO DE MOVIMIENTO"].isin(MOVIMIENTOS_SALIDA)]
-           .groupby(["SKU MASEF", "DESCRIPTION"])["TOTAL UNIT"].sum().rename("Salidas"))
-    stk = sub.groupby(["SKU MASEF", "DESCRIPTION"])["delta"].sum().rename("Stock")
+    # Stock por SKU + CTN + ESTADO + FECHA VCTO
+    group_cols = ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO"]
 
-    result = pd.concat([ent, sal, stk], axis=1).fillna(0).astype(int).reset_index()
-    return result[result["Stock"] > 0].sort_values("Stock", ascending=False)
+    stk = sub.groupby(group_cols)["delta"].sum().rename("Stock").reset_index()
+    stk["Stock"] = stk["Stock"].astype(int)
+    stk = stk[stk["Stock"] > 0].sort_values("Stock", ascending=False)
+    stk["FECHA VCTO"] = pd.to_datetime(stk["FECHA VCTO"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+
+    return stk.reset_index(drop=True)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -179,23 +180,32 @@ if vista == "📦 Stock":
         st.plotly_chart(fig, use_container_width=True)
 
     # Tabla
-    st.subheader(f"Detalle por SKU ({len(stock_df)} productos)")
+    st.subheader(f"Detalle de stock ({len(stock_df)} registros)")
+
+    display = stock_df[["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO", "Stock"]].rename(columns={
+        "SKU MASEF":   "SKU",
+        "DESCRIPTION": "Descripción",
+        "FECHA VCTO":  "Vencimiento",
+        "Stock":       "Unidades en Stock",
+    })
+
+    max_stock = int(stock_df["Stock"].max()) if len(stock_df) else 1
     st.dataframe(
-        stock_df.rename(columns={
-            "SKU MASEF":   "SKU",
-            "DESCRIPTION": "Descripción",
-        }),
+        display,
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Stock":     st.column_config.ProgressColumn("Stock", min_value=0, max_value=int(stock_df["Stock"].max()) if len(stock_df) else 1),
-            "Ingresos":  st.column_config.NumberColumn("Ingresos", format="%d"),
-            "Salidas":   st.column_config.NumberColumn("Salidas",  format="%d"),
+            "Unidades en Stock": st.column_config.ProgressColumn(
+                "Unidades en Stock",
+                min_value=0,
+                max_value=max_stock,
+                format="%d",
+            ),
         },
     )
 
     # Exportar
-    csv = stock_df.to_csv(index=False).encode("utf-8")
+    csv = display.to_csv(index=False).encode("utf-8")
     st.download_button("⬇️ Exportar CSV", csv, f"stock_{fecha_corte}.csv", "text/csv")
 
 
