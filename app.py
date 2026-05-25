@@ -82,7 +82,7 @@ def calcular_stock(df: pd.DataFrame, fecha_corte, excluir_tipos=None) -> pd.Data
     )
     result = stk.merge(ultima, on=["SKU MASEF", "DESCRIPTION"], how="left")
     result["Stock"] = result["Stock"].astype(int)
-    result = result[result["Stock"] != 0].sort_values("Stock", ascending=False)
+    result = result[result["Stock"] > 0].sort_values("Stock", ascending=False)
     result["FECHA VCTO"] = pd.to_datetime(result["FECHA VCTO"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
     return result.reset_index(drop=True)
 
@@ -144,16 +144,16 @@ if vista == "📦  Stock":
     total_entradas = int(sub_global[sub_global["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
     total_salidas  = int(sub_global[sub_global["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
 
-    # Stock neto por estado (sin MERMA, sin estados en 0)
-    por_estado = sub_global.groupby("ESTADO")["TOTAL UNIT"].sum()
-    por_estado = por_estado[por_estado != 0]
+    # Stock neto por estado usando calcular_stock (solo positivos)
+    stock_global = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
+    por_estado   = stock_global.groupby("ESTADO")["Stock"].sum()
+    por_estado   = por_estado[por_estado > 0]
+    total_neto   = int(stock_global["Stock"].sum())
 
-    cols_metrics = st.columns(3 + len(por_estado))
-    cols_metrics[0].metric("Total en stock",  f"{total_neto:,}")
-    cols_metrics[1].metric("Entradas acum.",  f"{total_entradas:,}")
-    cols_metrics[2].metric("Salidas acum.",   f"{total_salidas:,}")
+    cols_metrics = st.columns(1 + len(por_estado))
+    cols_metrics[0].metric("Total en stock", f"{total_neto:,}")
     for i, (estado, unidades) in enumerate(por_estado.items()):
-        cols_metrics[3 + i].metric(estado, f"{int(unidades):,}")
+        cols_metrics[1 + i].metric(estado, f"{int(unidades):,}")
 
     st.divider()
 
