@@ -67,24 +67,36 @@ def cargar_datos() -> pd.DataFrame:
 def calcular_stock(df: pd.DataFrame, fecha_corte) -> pd.DataFrame:
     sub = df[df["FECHA"] <= pd.to_datetime(fecha_corte)].copy()
 
-    def delta(row):
-        if row["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_ENTRADA:
-            return row["TOTAL UNIT"]
-        elif row["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_SALIDA:
-            return -row["TOTAL UNIT"]
-        return 0
+    # Signo: entradas suman, salidas restan
+    sub["delta"] = sub.apply(
+        lambda r: r["TOTAL UNIT"] if r["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_ENTRADA
+        else -r["TOTAL UNIT"] if r["TIPO DE MOVIMIENTO"] in MOVIMIENTOS_SALIDA
+        else 0,
+        axis=1
+    )
 
-    sub["delta"] = sub.apply(delta, axis=1)
+    # Stock neto por SKU (para el total correcto)
+    stk_sku = (
+        sub.groupby(["SKU MASEF", "DESCRIPTION"])["delta"]
+        .sum()
+        .rename("Stock")
+        .reset_index()
+    )
 
-    # Stock por SKU + CTN + ESTADO + FECHA VCTO
-    group_cols = ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO"]
+    # Última info de CTN, ESTADO, FECHA VCTO por SKU (para mostrar en tabla)
+    ultima_info = (
+        sub.sort_values("FECHA")
+        .groupby(["SKU MASEF", "DESCRIPTION"])[["CTN", "ESTADO", "FECHA VCTO"]]
+        .last()
+        .reset_index()
+    )
 
-    stk = sub.groupby(group_cols)["delta"].sum().rename("Stock").reset_index()
-    stk["Stock"] = stk["Stock"].astype(int)
-    stk = stk[stk["Stock"] > 0].sort_values("Stock", ascending=False)
-    stk["FECHA VCTO"] = pd.to_datetime(stk["FECHA VCTO"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
+    result = stk_sku.merge(ultima_info, on=["SKU MASEF", "DESCRIPTION"], how="left")
+    result["Stock"] = result["Stock"].astype(int)
+    result = result[result["Stock"] > 0].sort_values("Stock", ascending=False)
+    result["FECHA VCTO"] = pd.to_datetime(result["FECHA VCTO"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
 
-    return stk.reset_index(drop=True)
+    return result.reset_index(drop=True)
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -236,6 +248,17 @@ elif vista == "🔍 Trazabilidad":
 
     # Aplicar filtros
     result = df.copy()
+
+    # Clasificar movimientos en ENTRADA / SALIDA para display
+    def clasificar(tipo):
+        if tipo in MOVIMIENTOS_ENTRADA:
+            return "ENTRADA"
+        elif tipo in MOVIMIENTOS_SALIDA:
+            return "SALIDA"
+        return tipo
+
+    result["CLASE"] = result["TIPO DE MOVIMIENTO"].apply(clasificar)
+
     if f_ctn  != "Todos": result = result[result["CTN"] == f_ctn]
     if f_sku  != "Todos": result = result[result["SKU MASEF"] == f_sku]
     if f_tipo != "Todos": result = result[result["TIPO DE MOVIMIENTO"] == f_tipo]
@@ -276,21 +299,25 @@ elif vista == "🔍 Trazabilidad":
 
     # Tabla
     st.subheader(f"Movimientos ({len(result)} registros)")
-    cols_mostrar = ["FECHA", "CTN", "SKU MASEF", "DESCRIPTION", "TIPO DE MOVIMIENTO", "TOTAL UNIT", "ESTADO", "FECHA VCTO"]
+    cols_mostrar = ["FECHA", "CTN", "SKU MASEF", "DESCRIPTION", "TIPO DE MOVIMIENTO", "CLASE", "TOTAL UNIT", "ESTADO", "FECHA VCTO"]
     result_display = result[cols_mostrar].copy()
     result_display["FECHA"] = result_display["FECHA"].dt.strftime("%Y-%m-%d")
     result_display["FECHA VCTO"] = result_display["FECHA VCTO"].dt.strftime("%Y-%m-%d").where(result_display["FECHA VCTO"].notna(), "")
 
     st.dataframe(
         result_display.rename(columns={
-            "SKU MASEF":         "SKU",
-            "DESCRIPTION":       "Descripción",
-            "TIPO DE MOVIMIENTO":"Movimiento",
-            "TOTAL UNIT":        "Unidades",
-            "FECHA VCTO":        "Vencimiento",
+            "SKU MASEF":          "SKU",
+            "DESCRIPTION":        "Descripción",
+            "TIPO DE MOVIMIENTO": "Tipo",
+            "CLASE":              "Entrada/Salida",
+            "TOTAL UNIT":         "Unidades",
+            "FECHA VCTO":         "Vencimiento",
         }),
         use_container_width=True,
         hide_index=True,
+        column_config={
+            "Entrada/Salida": st.column_config.TextColumn("Entrada/Salida"),
+        }
     )
 
     # Exportar
