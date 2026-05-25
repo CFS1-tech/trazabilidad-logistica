@@ -137,23 +137,23 @@ if vista == "📦  Stock":
     st.caption("Stock acumulado hasta la fecha de corte. No incluye merma.")
 
     # ── Métricas globales arriba ──
-    stock_df_global = calcular_stock(df, date.today(), excluir_tipos={"MERMA"})
-    sub_global = df[df["FECHA"].dt.date <= date.today()]
-    sub_stock  = sub_global[~sub_global["TIPO DE MOVIMIENTO"].isin({"MERMA"})]
+    # Stock = excluir filas con ESTADO='MERMA'
+    df_sin_merma   = df[df["ESTADO"] != "MERMA"]
+    sub_global     = df_sin_merma[df_sin_merma["FECHA"].dt.date <= date.today()]
+    total_neto     = int(sub_global["TOTAL UNIT"].sum())
+    total_entradas = int(sub_global[sub_global["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
+    total_salidas  = int(sub_global[sub_global["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
 
-    total_neto     = int(stock_df_global["Stock"].sum())
-    total_entradas = int(sub_stock[sub_stock["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
-    total_salidas  = int(sub_stock[sub_stock["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
+    # Stock neto por estado (sin MERMA, sin estados en 0)
+    por_estado = sub_global.groupby("ESTADO")["TOTAL UNIT"].sum()
+    por_estado = por_estado[por_estado != 0]
 
-    # Unidades por estado
-    estados = df[df["TOTAL UNIT"] > 0].groupby("ESTADO")["TOTAL UNIT"].sum()
-
-    cols_metrics = st.columns(3 + len(estados))
-    cols_metrics[0].metric("Total unidades en stock", f"{total_neto:,}")
-    cols_metrics[1].metric("Entradas acum.", f"{total_entradas:,}")
-    cols_metrics[2].metric("Salidas acum.", f"{total_salidas:,}")
-    for i, (estado, unidades) in enumerate(estados.items()):
-        cols_metrics[3 + i].metric(f"Estado: {estado}", f"{int(unidades):,}")
+    cols_metrics = st.columns(3 + len(por_estado))
+    cols_metrics[0].metric("Total en stock",  f"{total_neto:,}")
+    cols_metrics[1].metric("Entradas acum.",  f"{total_entradas:,}")
+    cols_metrics[2].metric("Salidas acum.",   f"{total_salidas:,}")
+    for i, (estado, unidades) in enumerate(por_estado.items()):
+        cols_metrics[3 + i].metric(estado, f"{int(unidades):,}")
 
     st.divider()
 
@@ -173,7 +173,7 @@ if vista == "📦  Stock":
             st.form_submit_button("🔍 Buscar", use_container_width=True)
 
     # ── Calcular y filtrar ──
-    stock_df = calcular_stock(df, fecha_corte, excluir_tipos={"MERMA"})
+    stock_df = calcular_stock(df[df["ESTADO"] != "MERMA"], fecha_corte)
     if buscar:
         mask = (stock_df["SKU MASEF"].str.contains(buscar, case=False) |
                 stock_df["DESCRIPTION"].str.contains(buscar, case=False))
