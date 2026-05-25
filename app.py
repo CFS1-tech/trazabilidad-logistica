@@ -232,16 +232,11 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    vista = st.radio(
-        "",
-        [
-            "📦  Stock",
-            "🔍  Trazabilidad",
-            "🚚  Despachos",
-            "⚠️  Merma",
-        ],
-        label_visibility="collapsed"
-    )
+    vista = st.radio("", [
+        "📦  Stock",
+        "🔍  Trazabilidad",
+        "⚠️  Merma",
+    ], label_visibility="collapsed")
 
     st.markdown("---")
 
@@ -508,4 +503,305 @@ if vista == "📦  Stock":
     botones_descarga(
         display,
         "stock"
+    )
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: TRAZABILIDAD
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "🔍  Trazabilidad":
+
+    st.markdown("## 🔍 Reporte de Trazabilidad")
+
+    st.caption(
+        "Base completa de movimientos registrada en Google Sheets."
+    )
+
+    # ── Filtros ──
+    with st.form("form_trazabilidad"):
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+
+            contenedores = ["Todos"] + sorted(
+                df["CTN"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_ctn = st.selectbox(
+                "📦 Contenedor",
+                contenedores
+            )
+
+        with col2:
+
+            skus = ["Todos"] + sorted(
+                df["SKU MASEF"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_sku = st.selectbox(
+                "🏷️ SKU",
+                skus
+            )
+
+        with col3:
+
+            fecha_desde = st.date_input(
+                "📅 Desde",
+                value=df["FECHA"].min().date()
+            )
+
+        col4, col5 = st.columns([2, 1])
+
+        with col4:
+
+            fecha_hasta = st.date_input(
+                "📅 Hasta",
+                value=date.today()
+            )
+
+        with col5:
+
+            st.write("")
+            st.write("")
+
+            st.form_submit_button(
+                "🔍 Buscar",
+                use_container_width=True
+            )
+
+    # ── Filtrar ──
+    traz = df.copy()
+
+    if f_ctn != "Todos":
+
+        traz = traz[
+            traz["CTN"] == f_ctn
+        ]
+
+    if f_sku != "Todos":
+
+        traz = traz[
+            traz["SKU MASEF"] == f_sku
+        ]
+
+    traz = traz[
+        (
+            traz["FECHA"].dt.date >= fecha_desde
+        )
+        &
+        (
+            traz["FECHA"].dt.date <= fecha_hasta
+        )
+    ]
+
+    traz = traz.sort_values(
+        "FECHA",
+        ascending=False
+    )
+
+    # ── Métricas ──
+    m1, m2, m3 = st.columns(3)
+
+    m1.metric(
+        "Movimientos",
+        f"{len(traz):,}"
+    )
+
+    m2.metric(
+        "SKUs",
+        f"{traz['SKU MASEF'].nunique():,}"
+    )
+
+    m3.metric(
+        "Contenedores",
+        f"{traz['CTN'].nunique():,}"
+    )
+
+    st.divider()
+
+    # ── Tabla ──
+    traz_display = traz.copy()
+
+    traz_display["FECHA"] = (
+        traz_display["FECHA"]
+        .dt.strftime("%Y-%m-%d")
+    )
+
+    traz_display["FECHA VCTO"] = (
+        pd.to_datetime(
+            traz_display["FECHA VCTO"],
+            errors="coerce"
+        )
+        .dt.strftime("%Y-%m-%d")
+        .fillna("")
+    )
+
+    columnas = [
+        "FECHA",
+        "CTN",
+        "SKU MASEF",
+        "DESCRIPTION",
+        "TIPO DE MOVIMIENTO",
+        "ESTADO",
+        "TOTAL UNIT",
+        "FECHA VCTO"
+    ]
+
+    traz_display = traz_display[
+        columnas
+    ].rename(columns={
+
+        "SKU MASEF": "SKU",
+        "DESCRIPTION": "Descripción",
+        "TIPO DE MOVIMIENTO": "Movimiento",
+        "TOTAL UNIT": "Unidades",
+        "FECHA VCTO": "Vencimiento"
+
+    })
+
+    st.dataframe(
+        traz_display,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    botones_descarga(
+        traz_display,
+        "trazabilidad"
+    )
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: MERMA
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "⚠️  Merma":
+
+    st.markdown("## ⚠️ Reporte de Merma")
+
+    st.caption(
+        "Stock correspondiente únicamente a productos en estado MERMA."
+    )
+
+    # ── Filtros ──
+    with st.form("form_merma"):
+
+        col1, col2, col3 = st.columns([2, 2, 1])
+
+        with col1:
+
+            fecha_corte = st.date_input(
+                "📅 Fecha de corte",
+                value=date.today()
+            )
+
+        with col2:
+
+            buscar = st.text_input(
+                "🔎 Buscar SKU o descripción"
+            )
+
+        with col3:
+
+            st.write("")
+            st.write("")
+
+            st.form_submit_button(
+                "🔍 Buscar",
+                use_container_width=True
+            )
+
+    # ── SOLO MERMA ──
+    merma_df = calcular_stock(
+        df[df["ESTADO"] == "MERMA"],
+        fecha_corte
+    )
+
+    if buscar:
+
+        mask = (
+            merma_df["SKU MASEF"].str.contains(
+                buscar,
+                case=False,
+                na=False
+            )
+            |
+            merma_df["DESCRIPTION"].str.contains(
+                buscar,
+                case=False,
+                na=False
+            )
+        )
+
+        merma_df = merma_df[mask]
+
+    total_merma = int(
+        merma_df["Stock"].sum()
+    ) if len(merma_df) else 0
+
+    m1, m2 = st.columns(2)
+
+    m1.metric(
+        "Total merma",
+        f"{total_merma:,}"
+    )
+
+    m2.metric(
+        "SKUs con merma",
+        f"{len(merma_df):,}"
+    )
+
+    st.divider()
+
+    display = merma_df[
+        [
+            "SKU MASEF",
+            "DESCRIPTION",
+            "CTN",
+            "ESTADO",
+            "FECHA VCTO",
+            "Stock"
+        ]
+    ].rename(columns={
+
+        "SKU MASEF": "SKU",
+        "DESCRIPTION": "Descripción",
+        "FECHA VCTO": "Vencimiento",
+        "Stock": "Unidades"
+
+    })
+
+    max_merma = (
+        int(merma_df["Stock"].max())
+        if len(merma_df)
+        else 1
+    )
+
+    st.dataframe(
+        display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+
+            "Unidades":
+            st.column_config.ProgressColumn(
+                "Unidades",
+                min_value=0,
+                max_value=max_merma,
+                format="%d"
+            )
+
+        }
+    )
+
+    botones_descarga(
+        display,
+        "merma"
     )
