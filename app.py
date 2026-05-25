@@ -68,7 +68,7 @@ def calcular_stock(df: pd.DataFrame, fecha_corte) -> pd.DataFrame:
     )
     result = stk_sku.merge(ultima_info, on=["SKU MASEF", "DESCRIPTION"], how="left")
     result["Stock"] = result["Stock"].astype(int)
-    result = result[result["Stock"] > 0].sort_values("Stock", ascending=False)
+    result = result[result["Stock"] != 0].sort_values("Stock", ascending=False)
     result["FECHA VCTO"] = pd.to_datetime(result["FECHA VCTO"], errors="coerce").dt.strftime("%Y-%m-%d").fillna("")
     return result.reset_index(drop=True)
 
