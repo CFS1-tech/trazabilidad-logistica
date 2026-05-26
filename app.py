@@ -519,8 +519,8 @@ if not st.session_state["autenticado"]:
 
 ROL = st.session_state["rol"]
 
-VISTAS_ADMIN  = ["📦  Stock", "🔍  Trazabilidad", "📦  Packing List", "⚠️  Merma"]
-VISTAS_CLIENTE = ["📦  Stock", "🔍  Trazabilidad", "📦  Packing List"]
+VISTAS_ADMIN  = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "📦  Packing List", "⚠️  Merma"]
+VISTAS_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "📦  Packing List"]
 
 opciones_vista = VISTAS_ADMIN if ROL == "administrador" else VISTAS_CLIENTE
 
@@ -609,11 +609,335 @@ col_sku_pk = next(
     packing_df.columns[0]
 )
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: DASHBOARD
+# ══════════════════════════════════════════════════════════════════════════════
+
+if vista == "📊  Dashboard":
+
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">📊</div>
+      <div>
+        <h1>Dashboard Operativo</h1>
+        <p>Indicadores clave del almacén en tiempo real</p>
+      </div>
+      <span class="wms-badge">Hoy {date.today().strftime("%d/%m/%Y")}</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Preparar datos base ──────────────────────────────────────────────────
+    hoy        = date.today()
+    hace30     = pd.Timestamp(hoy) - pd.Timedelta(days=30)
+    hace7      = pd.Timestamp(hoy) - pd.Timedelta(days=7)
+
+    df_hoy     = df[df["FECHA"].dt.date <= hoy].copy()
+    df_sin_merma = df_hoy[df_hoy["ESTADO"] != "MERMA"].copy()
+
+    # Stock neto global
+    neto_global = df_sin_merma.groupby("SKU MASEF")["TOTAL UNIT"].sum()
+    stock_total = int(neto_global[neto_global > 0].sum())
+    skus_en_stock = int((neto_global > 0).sum())
+
+    # Movimientos últimos 30 días
+    df_30 = df[df["FECHA"] >= hace30].copy()
+    salidas_30 = int(df_30[df_30["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
+    entradas_30 = int(df_30[df_30["TOTAL UNIT"] > 0]["TOTAL UNIT"].sum())
+
+    # Movimientos últimos 7 días
+    df_7 = df[df["FECHA"] >= hace7].copy()
+    salidas_7  = int(df_7[df_7["TOTAL UNIT"] < 0]["TOTAL UNIT"].sum() * -1)
+
+    # SKUs sin movimiento en 30 días
+    skus_activos_30 = df_30["SKU MASEF"].unique()
+    skus_stock_list = neto_global[neto_global > 0].index
+    skus_sin_mov = int(len([s for s in skus_stock_list if s not in skus_activos_30]))
+
+    # ── KPIs fila 1 ──────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+        "📌 Resumen General</div>",
+        unsafe_allow_html=True
+    )
+
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("📦 Unidades en Stock",      f"{stock_total:,}")
+    k2.metric("🏷️ SKUs activos",           f"{skus_en_stock:,}")
+    k3.metric("📤 Salidas (30 días)",       f"{salidas_30:,}")
+    k4.metric("📥 Entradas (30 días)",      f"{entradas_30:,}")
+
+    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    k5, k6, k7, k8 = st.columns(4)
+    k5.metric("⚡ Salidas (7 días)",        f"{salidas_7:,}")
+    k6.metric("🔕 SKUs sin mov. (30d)",     f"{skus_sin_mov:,}")
+
+    k7.metric("⏳ SKUs sin mov. (30d)",     f"{skus_sin_mov:,}")
+
+    # CTNs activos
+    ctns_activos = int(df_sin_merma[df_sin_merma["TOTAL UNIT"] > 0]["CTN"].nunique())
+    k8.metric("🚢 Contenedores en stock",   f"{ctns_activos:,}")
+
+    st.divider()
+
+    # ── FILA DE GRÁFICOS 1 ───────────────────────────────────────────────────
+    col_izq, col_der = st.columns([3, 2])
+
+    with col_izq:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+            "🔥 Top 10 — Mayor Rotación (salidas 30 días)</div>",
+            unsafe_allow_html=True
+        )
+
+        # Top SKUs por salidas en 30 días
+        sal30 = df_30[df_30["TOTAL UNIT"] < 0].copy()
+        sal30["SKU MASEF"] = sal30["SKU MASEF"].astype(str).str.strip()
+
+        # Mapa descripción
+        desc_map = (
+            df[["SKU MASEF", "DESCRIPTION"]]
+            .dropna()
+            .query("DESCRIPTION != '' and DESCRIPTION != 'nan'")
+            .drop_duplicates(subset=["SKU MASEF"])
+            .set_index("SKU MASEF")["DESCRIPTION"]
+        )
+
+        top_rot = (
+            sal30.groupby("SKU MASEF")["TOTAL UNIT"]
+            .sum()
+            .abs()
+            .sort_values(ascending=False)
+            .head(10)
+            .reset_index()
+        )
+        top_rot.columns = ["SKU", "Salidas"]
+        top_rot["Descripción"] = top_rot["SKU"].map(desc_map).fillna(top_rot["SKU"])
+        top_rot["Label"] = top_rot.apply(
+            lambda r: r["Descripción"][:30] + "…" if len(r["Descripción"]) > 30 else r["Descripción"],
+            axis=1
+        )
+
+        if len(top_rot):
+            fig_rot = px.bar(
+                top_rot,
+                x="Salidas",
+                y="Label",
+                orientation="h",
+                color="Salidas",
+                color_continuous_scale=["#bfdbfe", "#185FA5", "#0d1b2a"],
+                text="Salidas",
+            )
+            fig_rot.update_traces(textposition="outside", textfont_size=11)
+            fig_rot.update_layout(
+                height=360,
+                margin=dict(l=0, r=30, t=10, b=10),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                showlegend=False,
+                coloraxis_showscale=False,
+                yaxis=dict(title="", tickfont=dict(size=11)),
+                xaxis=dict(title="Unidades despachadas", tickfont=dict(size=10)),
+            )
+            fig_rot.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig_rot, use_container_width=True)
+        else:
+            st.info("Sin salidas registradas en los últimos 30 días.")
+
+    with col_der:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+            "🏷️ Distribución de Stock por Estado</div>",
+            unsafe_allow_html=True
+        )
+
+        stock_estado = calcular_stock(df[df["ESTADO"] != "MERMA"], hoy)
+        por_estado_pie = (
+            stock_estado.groupby("ESTADO")["Stock"]
+            .sum()
+            .reset_index()
+        )
+        por_estado_pie.columns = ["Estado", "Unidades"]
+
+        if len(por_estado_pie):
+            fig_pie = px.pie(
+                por_estado_pie,
+                names="Estado",
+                values="Unidades",
+                color_discrete_sequence=["#185FA5","#3b82f6","#60a5fa","#93c5fd","#bfdbfe"],
+                hole=0.5,
+            )
+            fig_pie.update_traces(
+                textinfo="percent+label",
+                textfont_size=11,
+                pull=[0.03] * len(por_estado_pie)
+            )
+            fig_pie.update_layout(
+                height=360,
+                margin=dict(l=0, r=0, t=10, b=10),
+                paper_bgcolor="white",
+                showlegend=True,
+                legend=dict(font=dict(size=10), orientation="h", y=-0.1),
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+    st.divider()
+
+    # ── FILA DE GRÁFICOS 2 ───────────────────────────────────────────────────
+    col_a, col_b = st.columns([2, 3])
+
+    with col_a:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+            "📦 Top 10 — Mayor Stock Actual</div>",
+            unsafe_allow_html=True
+        )
+
+        stock_df_dash = calcular_stock(df[df["ESTADO"] != "MERMA"], hoy)
+        top_stock = (
+            stock_df_dash.groupby("SKU MASEF")["Stock"]
+            .sum()
+            .sort_values(ascending=False)
+            .head(10)
+            .reset_index()
+        )
+        top_stock["Descripción"] = top_stock["SKU MASEF"].map(desc_map).fillna(top_stock["SKU MASEF"])
+        top_stock["Label"] = top_stock["Descripción"].apply(
+            lambda x: x[:25] + "…" if len(x) > 25 else x
+        )
+
+        if len(top_stock):
+            fig_stk = px.bar(
+                top_stock,
+                x="Stock",
+                y="Label",
+                orientation="h",
+                color="Stock",
+                color_continuous_scale=["#d1fae5","#10b981","#064e3b"],
+                text="Stock",
+            )
+            fig_stk.update_traces(textposition="outside", textfont_size=10)
+            fig_stk.update_layout(
+                height=340,
+                margin=dict(l=0, r=30, t=10, b=10),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                showlegend=False,
+                coloraxis_showscale=False,
+                yaxis=dict(title="", tickfont=dict(size=10)),
+                xaxis=dict(title="Unidades", tickfont=dict(size=10)),
+            )
+            fig_stk.update_yaxes(autorange="reversed")
+            st.plotly_chart(fig_stk, use_container_width=True)
+
+    with col_b:
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+            "📈 Evolución de Entradas vs Salidas (últimos 60 días)</div>",
+            unsafe_allow_html=True
+        )
+
+        hace60 = pd.Timestamp(hoy) - pd.Timedelta(days=60)
+        df_60  = df[df["FECHA"] >= hace60].copy()
+        df_60["DIA"] = df_60["FECHA"].dt.date
+
+        ent_dia = (
+            df_60[df_60["TOTAL UNIT"] > 0]
+            .groupby("DIA")["TOTAL UNIT"].sum()
+            .reset_index()
+            .rename(columns={"TOTAL UNIT": "Entradas", "DIA": "Fecha"})
+        )
+        sal_dia = (
+            df_60[df_60["TOTAL UNIT"] < 0]
+            .groupby("DIA")["TOTAL UNIT"].sum()
+            .abs()
+            .reset_index()
+            .rename(columns={"TOTAL UNIT": "Salidas", "DIA": "Fecha"})
+        )
+
+        evol = ent_dia.merge(sal_dia, on="Fecha", how="outer").fillna(0).sort_values("Fecha")
+        evol["Fecha"] = pd.to_datetime(evol["Fecha"])
+
+        if len(evol):
+            fig_ev = px.line(
+                evol,
+                x="Fecha",
+                y=["Entradas", "Salidas"],
+                color_discrete_map={"Entradas": "#185FA5", "Salidas": "#ef4444"},
+                markers=True,
+            )
+            fig_ev.update_traces(line_width=2, marker_size=5)
+            fig_ev.update_layout(
+                height=340,
+                margin=dict(l=0, r=20, t=10, b=10),
+                paper_bgcolor="white",
+                plot_bgcolor="#fafafa",
+                legend=dict(
+                    title="",
+                    orientation="h",
+                    y=1.08,
+                    font=dict(size=11)
+                ),
+                xaxis=dict(title="", tickfont=dict(size=10), showgrid=False),
+                yaxis=dict(title="Unidades", tickfont=dict(size=10), gridcolor="#f1f5f9"),
+            )
+            st.plotly_chart(fig_ev, use_container_width=True)
+
+    st.divider()
+
+    # ── ALERTAS ──────────────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+        "🚨 Alertas del Sistema</div>",
+        unsafe_allow_html=True
+    )
+
+    alertas = []
+
+    # SKUs sin movimiento en 30 días
+    if skus_sin_mov > 0:
+        alertas.append(("🔵", "Baja rotación",
+                        f"{skus_sin_mov} SKU(s) en stock sin movimiento en los últimos 30 días.", "#eff6ff", "#1d4ed8"))
+
+    # Stock bajo (< 50 unidades)
+    stock_bajo = neto_global[(neto_global > 0) & (neto_global < 50)]
+    if len(stock_bajo):
+        alertas.append(("🔴", "Stock crítico",
+                        f"{len(stock_bajo)} SKU(s) con menos de 50 unidades disponibles.", "#fef2f2", "#b91c1c"))
+
+    if not alertas:
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+                    padding:16px 20px;color:#166534;font-size:13px;font-weight:500">
+          ✅ Sin alertas activas. El almacén opera con normalidad.
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        cols_alerta = st.columns(len(alertas))
+        for i, (icon, titulo, msg, bg, color) in enumerate(alertas):
+            cols_alerta[i].markdown(
+                f"""<div style="background:{bg};border-left:4px solid {color};
+                                border-radius:8px;padding:14px 16px;height:100%">
+                      <div style="font-size:11px;font-weight:700;color:{color};
+                                  text-transform:uppercase;letter-spacing:.06em;
+                                  margin-bottom:4px">{icon} {titulo}</div>
+                      <div style="font-size:13px;color:#1e293b;font-weight:500">{msg}</div>
+                    </div>""",
+                unsafe_allow_html=True
+            )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: STOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
-if vista == "📦  Stock":
+elif vista == "📦  Stock":
 
     st.markdown(f"""
     <div class="wms-header">
@@ -1141,3 +1465,4 @@ elif vista == "⚠️  Merma":
     )
 
     botones_descarga(display, "merma")
+
