@@ -460,7 +460,7 @@ def botones_descarga(df_display, nombre):
 
 USUARIOS = {
     "admin":    {"password": "admin123",  "rol": "administrador"},
-    "cliente":  {"password": "cliente123","rol": "cliente"},
+    "CFS_Masef":  {"password": "Masef2026","rol": "cliente"},
 }
 
 if "autenticado" not in st.session_state:
