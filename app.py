@@ -406,28 +406,26 @@ if vista == "📦  Stock":
         df["FECHA"].dt.date <= fecha_corte
     ].copy()
 
-    # Stock neto por SKU
+    # Excluir MERMA para que cartilla y reporte sean consistentes
+    sub_sin_merma = sub_global[sub_global["ESTADO"] != "MERMA"].copy()
+
+    # Stock neto por SKU (sin MERMA)
     neto_sku = (
-        sub_global
+        sub_sin_merma
         .groupby("SKU MASEF")["TOTAL UNIT"]
         .sum()
     )
 
-    # Total neto en stock (solo SKUs positivos)
+    # Total neto en stock (solo SKUs positivos, sin MERMA)
     total_neto = int(neto_sku[neto_sku > 0].sum())
 
     # SKUs con stock real
     skus_positivos = neto_sku[neto_sku > 0].index
 
-    # Filtrar solo esos SKUs para métricas por estado
-    df_positivos = sub_global[
-        sub_global["SKU MASEF"].isin(skus_positivos)
+    # Métricas por estado (ya sin MERMA)
+    df_positivos = sub_sin_merma[
+        sub_sin_merma["SKU MASEF"].isin(skus_positivos)
     ].copy()
-
-    # Excluir MERMA del display de métricas por estado
-    df_positivos = df_positivos[
-        df_positivos["ESTADO"] != "MERMA"
-    ]
 
     por_estado = (
         df_positivos
@@ -458,10 +456,12 @@ if vista == "📦  Stock":
     # DETALLE DE STOCK CORREGIDO
     # ─────────────────────────────────────────────────────────────
 
-    stock_df = calcular_stock(df, fecha_corte)
-
-    # Excluir MERMA del reporte de stock normal
-    stock_df = stock_df[stock_df["ESTADO"] != "MERMA"]
+    # Pasamos df sin MERMA: así el neto interno de calcular_stock
+    # y el total de la cartilla usan exactamente los mismos datos
+    stock_df = calcular_stock(
+        df[df["ESTADO"] != "MERMA"],
+        fecha_corte
+    )
 
     # ── Buscar ──
     if buscar:
