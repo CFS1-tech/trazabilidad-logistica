@@ -460,7 +460,7 @@ def botones_descarga(df_display, nombre):
 
 USUARIOS = {
     "admin":    {"password": "admin123",  "rol": "administrador"},
-    "CFS_Masef":  {"password": "Masef2026","rol": "cliente"},
+    "Masef_CFS":  {"password": "Masef2026","rol": "cliente"},
 }
 
 if "autenticado" not in st.session_state:
@@ -964,7 +964,7 @@ elif vista == "📦  Stock":
     # ── Filtros ──
     with st.form("form_stock"):
 
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 2])
 
         with col1:
 
@@ -998,13 +998,23 @@ elif vista == "📦  Stock":
 
         with col4:
 
-            st.write("")
-            st.write("")
-
-            st.form_submit_button(
-                "🔍 Buscar",
-                use_container_width=True
+            ctns_opts = ["Todos"] + sorted(
+                df["CTN"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
             )
+
+            f_ctn_stock = st.selectbox(
+                "📦 Contenedor",
+                ctns_opts
+            )
+
+        st.form_submit_button(
+            "🔍 Buscar",
+            use_container_width=True
+        )
 
     # ─────────────────────────────────────────────────────────────
     # MÉTRICAS GLOBALES
@@ -1091,6 +1101,13 @@ elif vista == "📦  Stock":
 
         stock_df = stock_df[
             stock_df["ESTADO"] == f_estado
+        ]
+
+    # ── Filtro CTN ──
+    if f_ctn_stock != "Todos":
+
+        stock_df = stock_df[
+            stock_df["CTN"] == f_ctn_stock
         ]
 
     # ── Tabla ──
@@ -1181,7 +1198,7 @@ elif vista == "🔍  Trazabilidad":
 
     with st.form("form_trazabilidad"):
 
-        col1, col2, col3 = st.columns(3)
+        col1, col2, col3, col4 = st.columns(4)
 
         with col1:
 
@@ -1219,6 +1236,18 @@ elif vista == "🔍  Trazabilidad":
 
             f_tipo = st.selectbox("🔄 Tipo de movimiento", tipos_mov)
 
+        with col4:
+
+            estados_traz = ["Todos"] + sorted(
+                df["ESTADO"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_estado_traz = st.selectbox("🏷️ Estado", estados_traz)
+
         col5, col6 = st.columns(2)
 
         with col5:
@@ -1250,6 +1279,9 @@ elif vista == "🔍  Trazabilidad":
 
     if f_tipo != "Todos":
         traz = traz[traz["TIPO DE MOVIMIENTO"] == f_tipo]
+
+    if f_estado_traz != "Todos":
+        traz = traz[traz["ESTADO"] == f_estado_traz]
 
     traz = traz[
         (traz["FECHA"].dt.date >= fecha_desde)
