@@ -400,16 +400,27 @@ def calcular_stock(
     return result.sort_values("Stock", ascending=False).reset_index(drop=True)
 
 
+def formatear_fechas_excel(df: pd.DataFrame) -> pd.DataFrame:
+    """Convierte columnas de fecha a formato DD/MM/YYYY para exportación."""
+    df = df.copy()
+    for col in df.columns:
+        if "FECHA" in col.upper() or "VENCIMIENTO" in col.upper() or "INGRESO" in col.upper():
+            converted = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
+            if converted.notna().any():
+                df[col] = converted.dt.strftime("%d/%m/%Y").fillna(df[col].astype(str))
+    return df
+
 def to_excel(df_export: pd.DataFrame) -> bytes:
 
     buf = io.BytesIO()
+    df_fmt = formatear_fechas_excel(df_export)
 
     with pd.ExcelWriter(
         buf,
         engine="openpyxl"
     ) as writer:
 
-        df_export.to_excel(
+        df_fmt.to_excel(
             writer,
             index=False,
             sheet_name="Reporte"
@@ -430,7 +441,7 @@ def botones_descarga(df_display, nombre):
     with col_csv:
         st.download_button(
             "⬇️ CSV",
-            df_display.to_csv(index=False).encode("utf-8"),
+            formatear_fechas_excel(df_display).to_csv(index=False).encode("utf-8"),
             f"{nombre}_{date.today()}.csv",
             "text/csv",
             use_container_width=True
@@ -519,8 +530,8 @@ if not st.session_state["autenticado"]:
 
 ROL = st.session_state["rol"]
 
-VISTAS_ADMIN  = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "📦  Packing List", "⚠️  Merma"]
-VISTAS_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "📦  Packing List"]
+VISTAS_ADMIN  = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
+VISTAS_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
 
 opciones_vista = VISTAS_ADMIN if ROL == "administrador" else VISTAS_CLIENTE
 
@@ -1277,6 +1288,141 @@ elif vista == "🔍  Trazabilidad":
 
     botones_descarga(traz_display, "trazabilidad")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: DESPACHOS
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "🚚  Despachos":
+
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">🚚</div>
+      <div>
+        <h1>Reporte de Despachos</h1>
+        <p>Movimientos de tipo SALIDA registrados en el sistema</p>
+      </div>
+      <span class="wms-badge">Salidas</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Filtros ──
+    with st.form("form_despachos"):
+
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            ctns_d = ["Todos"] + sorted(
+                df["CTN"].dropna().astype(str).unique().tolist()
+            )
+            f_ctn_d = st.selectbox("📦 Contenedor", ctns_d)
+
+        with col2:
+            skus_d = ["Todos"] + sorted(
+                df["SKU MASEF"].dropna().astype(str).unique().tolist()
+            )
+            f_sku_d = st.selectbox("🏷️ SKU", skus_d)
+
+        with col3:
+            guias_d = ["Todos"] + sorted(
+                df[df["TIPO DE MOVIMIENTO"] == "SALIDA"]["GUIA"]
+                .dropna().astype(str)
+                .unique().tolist()
+            )
+            f_guia_d = st.selectbox("📄 Guía", guias_d)
+
+        col4, col5 = st.columns(2)
+
+        with col4:
+            fecha_desde_d = st.date_input(
+                "📅 Desde",
+                value=df["FECHA"].min().date()
+            )
+
+        with col5:
+            fecha_hasta_d = st.date_input(
+                "📅 Hasta",
+                value=date.today()
+            )
+
+        st.form_submit_button("🔍 Buscar", use_container_width=True)
+
+    # ── Filtrar solo SALIDAS ──
+    desp = df[df["TIPO DE MOVIMIENTO"] == "SALIDA"].copy()
+
+    if f_ctn_d != "Todos":
+        desp = desp[desp["CTN"] == f_ctn_d]
+
+    if f_sku_d != "Todos":
+        desp = desp[desp["SKU MASEF"] == f_sku_d]
+
+    if f_guia_d != "Todos":
+        desp = desp[desp["GUIA"].astype(str) == f_guia_d]
+
+    desp = desp[
+        (desp["FECHA"].dt.date >= fecha_desde_d) &
+        (desp["FECHA"].dt.date <= fecha_hasta_d)
+    ]
+
+    desp = desp.sort_values("FECHA", ascending=False)
+
+    # Quitar columna OBS
+    cols_excluir = [c for c in desp.columns if c.upper() in ["OBS", "OBSERVACION", "OBSERVACIONES"]]
+    desp = desp.drop(columns=cols_excluir, errors="ignore")
+
+    # ── Métricas ──
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("🚚 Despachos",         f"{len(desp):,}")
+    m2.metric("🏷️ SKUs despachados",  f"{desp['SKU MASEF'].nunique():,}")
+    m3.metric("📄 Guías",             f"{desp['GUIA'].nunique():,}" if "GUIA" in desp.columns else "—")
+    m4.metric("📦 Unidades salidas",  f"{int(desp['TOTAL UNIT'].sum() * -1):,}")
+
+    st.divider()
+
+    # ── Tabla con fechas formateadas ──
+    desp_display = desp.copy()
+    for col in desp_display.columns:
+        if "FECHA" in col.upper():
+            try:
+                desp_display[col] = pd.to_datetime(
+                    desp_display[col], errors="coerce"
+                ).dt.strftime("%d/%m/%Y").fillna("")
+            except:
+                pass
+
+    st.markdown(
+        f"""<div style='display:flex;align-items:center;justify-content:space-between;
+                        margin-bottom:8px'>
+              <span style='font-size:13px;font-weight:700;color:#1e293b'>
+                Detalle de despachos
+              </span>
+              <span style='background:#eff6ff;color:#185FA5;font-size:11px;
+                           font-weight:700;padding:3px 10px;border-radius:12px;
+                           border:1px solid #bfdbfe'>
+                {len(desp_display)} registros
+              </span>
+            </div>""",
+        unsafe_allow_html=True
+    )
+
+    st.dataframe(desp_display, use_container_width=True, hide_index=True)
+
+    # ── Solo Excel ──
+    st.markdown(
+        "<div style='font-size:10px;font-weight:700;color:#94a3b8;"
+        "text-transform:uppercase;letter-spacing:.08em;margin:16px 0 6px'>Exportar</div>",
+        unsafe_allow_html=True
+    )
+    col_x, col_sp = st.columns([1, 4])
+    with col_x:
+        st.download_button(
+            "📊 Excel",
+            to_excel(desp_display),
+            f"despachos_{date.today().strftime('%d-%m-%Y')}.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: PACKING LIST
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1465,4 +1611,3 @@ elif vista == "⚠️  Merma":
     )
 
     botones_descarga(display, "merma")
-
