@@ -626,7 +626,7 @@ elif vista == "🔍  Trazabilidad":
 
     with st.form("form_trazabilidad"):
 
-        col1, col2, col3, col4 = st.columns(4)
+        col1, col2, col3 = st.columns(3)
 
         with col1:
 
@@ -654,12 +654,26 @@ elif vista == "🔍  Trazabilidad":
 
         with col3:
 
+            tipos_mov = ["Todos"] + sorted(
+                df["TIPO DE MOVIMIENTO"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+
+            f_tipo = st.selectbox("🔄 Tipo de movimiento", tipos_mov)
+
+        col5, col6 = st.columns(2)
+
+        with col5:
+
             fecha_desde = st.date_input(
                 "📅 Desde",
                 value=df["FECHA"].min().date()
             )
 
-        with col4:
+        with col6:
 
             fecha_hasta = st.date_input(
                 "📅 Hasta",
@@ -678,6 +692,9 @@ elif vista == "🔍  Trazabilidad":
 
     if f_sku != "Todos":
         traz = traz[traz["SKU MASEF"] == f_sku]
+
+    if f_tipo != "Todos":
+        traz = traz[traz["TIPO DE MOVIMIENTO"] == f_tipo]
 
     traz = traz[
         (traz["FECHA"].dt.date >= fecha_desde)
@@ -894,4 +911,3 @@ elif vista == "⚠️  Merma":
     )
 
     botones_descarga(display, "merma")
-
