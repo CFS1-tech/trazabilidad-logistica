@@ -491,18 +491,39 @@ if vista == "📦  Stock":
         f"**Detalle de stock** — {len(stock_df)} registros"
     )
 
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
+    pk_presentacion = (
+        packing_df[["CTN", col_sku, "CASE PACK IN"]]
+        .copy()
+        .rename(columns={col_sku: "SKU MASEF"})
+    )
+    pk_presentacion["CTN"]      = pk_presentacion["CTN"].astype(str).str.strip()
+    pk_presentacion["SKU MASEF"]= pk_presentacion["SKU MASEF"].astype(str).str.strip()
+    pk_presentacion["CASE PACK IN"] = pd.to_numeric(
+        pk_presentacion["CASE PACK IN"], errors="coerce"
+    )
+    pk_presentacion = pk_presentacion.drop_duplicates(subset=["CTN", "SKU MASEF"])
+
+    stock_df = stock_df.merge(
+        pk_presentacion,
+        on=["CTN", "SKU MASEF"],
+        how="left"
+    )
+
     display = stock_df[[
         "SKU MASEF",
         "DESCRIPTION",
         "CTN",
         "ESTADO",
         "FECHA VCTO",
+        "CASE PACK IN",
         "Stock",
     ]].rename(columns={
-        "SKU MASEF":   "SKU",
-        "DESCRIPTION": "Descripción",
-        "FECHA VCTO":  "Vencimiento",
-        "Stock":       "Unidades en Stock",
+        "SKU MASEF":    "SKU",
+        "DESCRIPTION":  "Descripción",
+        "FECHA VCTO":   "Vencimiento",
+        "CASE PACK IN": "Presentación",
+        "Stock":        "Unidades en Stock",
     })
 
     max_stock = int(stock_df["Stock"].max()) if len(stock_df) else 1
