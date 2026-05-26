@@ -185,19 +185,34 @@ def calcular_stock(
 
     # ─────────────────────────────────────────────
     # PASO 3: Agrupar por detalle y quedarse
-    # solo con combinaciones de stock positivo
+    # solo con combinaciones de stock positivo.
+    # GENERAL: agrupa SIN fecha vencimiento
+    # Resto:   agrupa CON fecha vencimiento
     # ─────────────────────────────────────────────
 
-    result = (
-        sub_valido
-        .groupby(
-            ["SKU MASEF", "CTN", "ESTADO", "FECHA VCTO"],
-            dropna=False
-        )["TOTAL UNIT"]
+    sub_general = sub_valido[sub_valido["ESTADO"] == "GENERAL"]
+    sub_resto   = sub_valido[sub_valido["ESTADO"] != "GENERAL"]
+
+    # GENERAL → SKU + CTN + ESTADO (sin FECHA VCTO)
+    result_general = (
+        sub_general
+        .groupby(["SKU MASEF", "CTN", "ESTADO"], dropna=False)["TOTAL UNIT"]
         .sum()
         .reset_index()
         .rename(columns={"TOTAL UNIT": "Stock"})
     )
+    result_general["FECHA VCTO"] = ""
+
+    # Resto → SKU + CTN + ESTADO + FECHA VCTO
+    result_resto = (
+        sub_resto
+        .groupby(["SKU MASEF", "CTN", "ESTADO", "FECHA VCTO"], dropna=False)["TOTAL UNIT"]
+        .sum()
+        .reset_index()
+        .rename(columns={"TOTAL UNIT": "Stock"})
+    )
+
+    result = pd.concat([result_general, result_resto], ignore_index=True)
 
     result = result[result["Stock"] > 0].copy()
 
