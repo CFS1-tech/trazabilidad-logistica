@@ -19,16 +19,175 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-[data-testid="stSidebar"] { background-color: #0f1923; }
-[data-testid="stSidebar"] * { color: #e0e6f0 !important; }
-[data-testid="stSidebar"] hr { border-color: #2d3748; }
-[data-testid="stMetric"] { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; padding: 16px 20px; }
-[data-testid="stMetricLabel"] { font-size: 12px !important; color: #64748b !important; }
-[data-testid="stMetricValue"] { font-size: 26px !important; color: #0f172a !important; font-weight: 600 !important; }
-.stButton > button { background-color: #185FA5 !important; color: white !important; border: none !important; border-radius: 8px !important; font-weight: 500 !important; }
-.stButton > button:hover { background-color: #0C447C !important; }
-[data-testid="stForm"] { background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px; padding: 16px; }
-h2 { color: #1e293b !important; font-weight: 600 !important; font-size: 18px !important; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+/* ── GLOBAL ── */
+html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+.main .block-container { padding-top: 1.5rem; padding-bottom: 2rem; max-width: 100%; }
+[data-testid="stAppViewContainer"] { background: #f0f2f6; }
+
+/* ── SIDEBAR ── */
+[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0d1b2a 0%, #1a2f4a 100%) !important;
+    border-right: 1px solid #1e3a5f;
+}
+[data-testid="stSidebar"] * { color: #cbd5e1 !important; }
+[data-testid="stSidebar"] hr { border-color: #1e3a5f !important; }
+[data-testid="stSidebar"] .stRadio label {
+    padding: 8px 12px !important;
+    border-radius: 6px !important;
+    margin: 2px 0 !important;
+    transition: background 0.2s !important;
+    display: block !important;
+    font-size: 13px !important;
+    font-weight: 500 !important;
+}
+[data-testid="stSidebar"] .stRadio label:hover { background: rgba(255,255,255,0.07) !important; }
+[data-testid="stSidebar"] [data-baseweb="radio"] input:checked + div + label,
+[data-testid="stSidebar"] .stRadio [aria-checked="true"] + label {
+    background: rgba(24,95,165,0.35) !important;
+    color: #93c5fd !important;
+}
+
+/* ── MÉTRICAS ── */
+[data-testid="stMetric"] {
+    background: #ffffff !important;
+    border: none !important;
+    border-left: 4px solid #185FA5 !important;
+    border-radius: 8px !important;
+    padding: 18px 22px !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08) !important;
+}
+[data-testid="stMetricLabel"] {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    color: #64748b !important;
+    text-transform: uppercase !important;
+    letter-spacing: .06em !important;
+}
+[data-testid="stMetricValue"] {
+    font-size: 28px !important;
+    font-weight: 700 !important;
+    color: #0f172a !important;
+}
+
+/* ── BOTONES ── */
+.stButton > button {
+    background: linear-gradient(135deg, #185FA5 0%, #1a6fc4 100%) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 13px !important;
+    padding: 8px 16px !important;
+    transition: all 0.2s !important;
+    box-shadow: 0 2px 4px rgba(24,95,165,0.3) !important;
+}
+.stButton > button:hover {
+    background: linear-gradient(135deg, #0C447C 0%, #185FA5 100%) !important;
+    box-shadow: 0 4px 8px rgba(24,95,165,0.4) !important;
+    transform: translateY(-1px) !important;
+}
+
+/* ── BOTONES DESCARGA ── */
+[data-testid="stDownloadButton"] > button {
+    background: #ffffff !important;
+    color: #185FA5 !important;
+    border: 1.5px solid #185FA5 !important;
+    border-radius: 6px !important;
+    font-weight: 600 !important;
+    font-size: 12px !important;
+}
+[data-testid="stDownloadButton"] > button:hover {
+    background: #185FA5 !important;
+    color: white !important;
+}
+
+/* ── FORMULARIOS ── */
+[data-testid="stForm"] {
+    background: #ffffff !important;
+    border: 1px solid #e2e8f0 !important;
+    border-radius: 10px !important;
+    padding: 20px !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+}
+
+/* ── INPUTS ── */
+[data-testid="stTextInput"] input,
+[data-testid="stSelectbox"] > div,
+[data-testid="stDateInput"] input {
+    border-radius: 6px !important;
+    border-color: #cbd5e1 !important;
+    font-size: 13px !important;
+}
+
+/* ── DATAFRAME ── */
+[data-testid="stDataFrame"] {
+    border-radius: 10px !important;
+    overflow: hidden !important;
+    border: 1px solid #e2e8f0 !important;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
+}
+
+/* ── DIVIDER ── */
+hr { border-color: #e2e8f0 !important; margin: 1rem 0 !important; }
+
+/* ── PÁGINA HEADER ── */
+.wms-header {
+    background: linear-gradient(135deg, #0d1b2a 0%, #185FA5 100%);
+    border-radius: 10px;
+    padding: 20px 28px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    box-shadow: 0 4px 12px rgba(24,95,165,0.25);
+}
+.wms-header h1 {
+    color: white !important;
+    font-size: 20px !important;
+    font-weight: 700 !important;
+    margin: 0 !important;
+    letter-spacing: -.01em !important;
+}
+.wms-header p {
+    color: #93c5fd !important;
+    font-size: 12px !important;
+    margin: 2px 0 0 0 !important;
+}
+.wms-badge {
+    background: rgba(255,255,255,0.15);
+    border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-size: 11px;
+    color: white !important;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    margin-left: auto;
+}
+
+/* ── SECCIÓN LABEL ── */
+.section-label {
+    font-size: 10px;
+    font-weight: 700;
+    color: #94a3b8;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    margin-bottom: 8px;
+}
+
+/* ── ALERT / INFO BOXES ── */
+.wms-info {
+    background: #eff6ff;
+    border-left: 4px solid #3b82f6;
+    border-radius: 6px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: #1e40af;
+    margin-bottom: 12px;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -260,12 +419,17 @@ def to_excel(df_export: pd.DataFrame) -> bytes:
 
 def botones_descarga(df_display, nombre):
 
-    col_csv, col_xlsx = st.columns(2)
+    st.markdown(
+        "<div style='font-size:10px;font-weight:700;color:#94a3b8;"
+        "text-transform:uppercase;letter-spacing:.08em;margin:16px 0 6px'>Exportar</div>",
+        unsafe_allow_html=True
+    )
+
+    col_csv, col_xlsx, col_space = st.columns([1, 1, 3])
 
     with col_csv:
-
         st.download_button(
-            "⬇️ Exportar CSV",
+            "⬇️ CSV",
             df_display.to_csv(index=False).encode("utf-8"),
             f"{nombre}_{date.today()}.csv",
             "text/csv",
@@ -273,9 +437,8 @@ def botones_descarga(df_display, nombre):
         )
 
     with col_xlsx:
-
         st.download_button(
-            "📊 Exportar Excel",
+            "📊 Excel",
             to_excel(df_display),
             f"{nombre}_{date.today()}.xlsx",
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -310,25 +473,46 @@ def do_logout():
 
 if not st.session_state["autenticado"]:
 
-    st.markdown(
-        "<div style='max-width:380px;margin:80px auto 0 auto'>",
-        unsafe_allow_html=True
-    )
-    st.markdown("## 📦 WMS — Iniciar sesión")
-    st.markdown("---")
+    st.markdown("""
+    <div style="max-width:420px;margin:60px auto 0 auto">
+      <div style="background:linear-gradient(135deg,#0d1b2a 0%,#185FA5 100%);
+                  border-radius:14px;padding:36px 32px 28px;text-align:center;
+                  box-shadow:0 8px 32px rgba(24,95,165,0.3);margin-bottom:24px">
+        <div style="font-size:48px;margin-bottom:12px">📦</div>
+        <h1 style="color:white;font-size:24px;font-weight:700;margin:0;letter-spacing:-.02em">
+          Warehouse Management System
+        </h1>
+        <p style="color:#93c5fd;font-size:13px;margin:8px 0 0">
+          Ingresa tus credenciales para continuar
+        </p>
+      </div>
+    </div>
+    """, unsafe_allow_html=True)
 
-    with st.form("form_login"):
-        usuario  = st.text_input("👤 Usuario")
-        password = st.text_input("🔑 Contraseña", type="password")
-        ok = st.form_submit_button("Ingresar", use_container_width=True)
+    col_l, col_c, col_r = st.columns([1, 2, 1])
+    with col_c:
+        with st.form("form_login"):
+            st.markdown(
+                "<p style='font-size:11px;font-weight:700;color:#64748b;"
+                "text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px'>Usuario</p>",
+                unsafe_allow_html=True
+            )
+            usuario  = st.text_input("", placeholder="Ingresa tu usuario", label_visibility="collapsed")
+            st.markdown(
+                "<p style='font-size:11px;font-weight:700;color:#64748b;"
+                "text-transform:uppercase;letter-spacing:.08em;margin-bottom:4px'>Contraseña</p>",
+                unsafe_allow_html=True
+            )
+            password = st.text_input("", placeholder="••••••••", type="password", label_visibility="collapsed")
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            ok = st.form_submit_button("🔐  Ingresar al sistema", use_container_width=True)
 
-    if ok:
-        if do_login(usuario.strip(), password.strip()):
-            st.rerun()
-        else:
-            st.error("Usuario o contraseña incorrectos.")
+        if ok:
+            if do_login(usuario.strip(), password.strip()):
+                st.rerun()
+            else:
+                st.error("❌ Usuario o contraseña incorrectos.")
 
-    st.markdown("</div>", unsafe_allow_html=True)
     st.stop()
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -342,37 +526,50 @@ opciones_vista = VISTAS_ADMIN if ROL == "administrador" else VISTAS_CLIENTE
 
 with st.sidebar:
 
-    st.markdown("### 📦 WMS")
+    # Logo / Título
+    st.markdown("""
+    <div style="padding:20px 4px 8px;text-align:center">
+      <div style="font-size:36px">📦</div>
+      <div style="font-size:18px;font-weight:700;color:#e2e8f0;letter-spacing:-.01em">WMS</div>
+      <div style="font-size:10px;color:#64748b;text-transform:uppercase;
+                  letter-spacing:.1em;margin-top:2px">Warehouse Management</div>
+    </div>
+    """, unsafe_allow_html=True)
 
+    # Usuario
+    rol_color = "#3b82f6" if ROL == "administrador" else "#10b981"
     st.markdown(
-        "<small style='color:#64748b'>Warehouse Management System</small>",
+        f"""<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
+                        border-radius:8px;padding:10px 12px;margin:8px 0 16px">
+              <div style="font-size:11px;color:#94a3b8;margin-bottom:2px">Sesión activa</div>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="font-size:13px;color:#e2e8f0;font-weight:600">
+                  👤 {st.session_state['usuario']}
+                </span>
+                <span style="background:{rol_color};color:white;font-size:9px;
+                             font-weight:700;padding:2px 8px;border-radius:10px;
+                             text-transform:uppercase;letter-spacing:.06em">{ROL}</span>
+              </div>
+            </div>""",
         unsafe_allow_html=True
     )
 
     st.markdown(
-        f"<small style='color:#94a3b8'>👤 {st.session_state['usuario']} "
-        f"<span style='background:#1e3a5f;padding:2px 7px;border-radius:4px;"
-        f"font-size:10px;text-transform:uppercase'>{ROL}</span></small>",
-        unsafe_allow_html=True
-    )
-
-    st.markdown("---")
-
-    st.markdown(
-        "<small style='color:#64748b;text-transform:uppercase;letter-spacing:.08em'>REPORTES</small>",
+        "<div style='font-size:9px;font-weight:700;color:#475569;"
+        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>Módulos</div>",
         unsafe_allow_html=True
     )
 
     vista = st.radio("", opciones_vista, label_visibility="collapsed")
 
-    st.markdown("---")
-
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     st.markdown(
-        "<small style='color:#64748b;text-transform:uppercase;letter-spacing:.08em'>SISTEMA</small>",
+        "<div style='font-size:9px;font-weight:700;color:#475569;"
+        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>Sistema</div>",
         unsafe_allow_html=True
     )
 
-    if st.button("🔄  Recargar datos", use_container_width=True):
+    if st.button("🔄  Actualizar datos", use_container_width=True):
         st.cache_data.clear()
         st.rerun()
 
@@ -381,7 +578,9 @@ with st.sidebar:
         st.rerun()
 
     st.markdown(
-        f"<small style='color:#4a5568'>Última carga: {datetime.now().strftime('%H:%M:%S')}</small>",
+        f"<div style='font-size:10px;color:#475569;padding:12px 4px 4px;"
+        f"border-top:1px solid #1e3a5f;margin-top:8px'>"
+        f"⏱ Datos al {datetime.now().strftime('%H:%M:%S')}</div>",
         unsafe_allow_html=True
     )
 
@@ -416,11 +615,16 @@ col_sku_pk = next(
 
 if vista == "📦  Stock":
 
-    st.markdown("## 📦 Reporte de Stock")
-
-    st.caption(
-        "Stock acumulado hasta la fecha de corte."
-    )
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">📦</div>
+      <div>
+        <h1>Reporte de Stock</h1>
+        <p>Stock acumulado hasta la fecha de corte seleccionada</p>
+      </div>
+      <span class="wms-badge">En tiempo real</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── Filtros ──
     with st.form("form_stock"):
@@ -556,7 +760,18 @@ if vista == "📦  Stock":
 
     # ── Tabla ──
     st.markdown(
-        f"**Detalle de stock** — {len(stock_df)} registros"
+        f"""<div style='display:flex;align-items:center;justify-content:space-between;
+                        margin-bottom:8px'>
+              <span style='font-size:13px;font-weight:700;color:#1e293b'>
+                Detalle de stock
+              </span>
+              <span style='background:#eff6ff;color:#185FA5;font-size:11px;
+                           font-weight:700;padding:3px 10px;border-radius:12px;
+                           border:1px solid #bfdbfe'>
+                {{len(stock_df)}} registros
+              </span>
+            </div>""",
+        unsafe_allow_html=True
     )
 
     # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
@@ -618,11 +833,16 @@ if vista == "📦  Stock":
 
 elif vista == "🔍  Trazabilidad":
 
-    st.markdown("## 🔍 Reporte de Trazabilidad")
-
-    st.caption(
-        "Base completa de movimientos."
-    )
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">🔍</div>
+      <div>
+        <h1>Trazabilidad de Movimientos</h1>
+        <p>Historial completo de entradas, salidas y ajustes</p>
+      </div>
+      <span class="wms-badge">Auditoría</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.form("form_trazabilidad"):
 
@@ -706,9 +926,9 @@ elif vista == "🔍  Trazabilidad":
 
     m1, m2, m3 = st.columns(3)
 
-    m1.metric("Movimientos", f"{len(traz):,}")
-    m2.metric("SKUs",        f"{traz['SKU MASEF'].nunique():,}")
-    m3.metric("CTNs",        f"{traz['CTN'].nunique():,}")
+    m1.metric("📋 Movimientos",    f"{len(traz):,}")
+    m2.metric("🏷️ SKUs únicos",   f"{traz['SKU MASEF'].nunique():,}")
+    m3.metric("📦 Contenedores",   f"{traz['CTN'].nunique():,}")
 
     st.divider()
 
@@ -739,11 +959,16 @@ elif vista == "🔍  Trazabilidad":
 
 elif vista == "📦  Packing List":
 
-    st.markdown("## 📦 Reporte Packing List")
-
-    st.caption(
-        "Base completa de la hoja PACKINGLIST."
-    )
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">📋</div>
+      <div>
+        <h1>Packing List</h1>
+        <p>Detalle de contenedores y unidades por SKU</p>
+      </div>
+      <span class="wms-badge">Recepción</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     with st.form("form_packing"):
 
@@ -817,11 +1042,16 @@ elif vista == "📦  Packing List":
 
 elif vista == "⚠️  Merma":
 
-    st.markdown("## ⚠️ Reporte de Merma")
-
-    st.caption(
-        "Stock correspondiente únicamente a productos en estado MERMA."
-    )
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">⚠️</div>
+      <div>
+        <h1>Reporte de Merma</h1>
+        <p>Productos dañados, vencidos o con pérdida registrada</p>
+      </div>
+      <span class="wms-badge">Alertas</span>
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── Filtros ──
     with st.form("form_merma"):
