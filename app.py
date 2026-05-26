@@ -1,5 +1,5 @@
 """
-app.py  —  WMS MASEF en Streamlit
+app.py  —  WMS en Streamlit
 """
 
 import streamlit as st
@@ -11,7 +11,7 @@ from google.oauth2.service_account import Credentials
 from datetime import date, datetime
 
 st.set_page_config(
-    page_title="WMS MASEF",
+    page_title="WMS",
     page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -282,14 +282,77 @@ def botones_descarga(df_display, nombre):
             use_container_width=True
         )
 
+# ── Login ─────────────────────────────────────────────────────────────────────
+
+USUARIOS = {
+    "admin":    {"password": "admin123",  "rol": "administrador"},
+    "cliente":  {"password": "cliente123","rol": "cliente"},
+}
+
+if "autenticado" not in st.session_state:
+    st.session_state["autenticado"] = False
+    st.session_state["rol"]         = None
+    st.session_state["usuario"]     = None
+
+def do_login(usuario, password):
+    u = USUARIOS.get(usuario)
+    if u and u["password"] == password:
+        st.session_state["autenticado"] = True
+        st.session_state["rol"]         = u["rol"]
+        st.session_state["usuario"]     = usuario
+        return True
+    return False
+
+def do_logout():
+    st.session_state["autenticado"] = False
+    st.session_state["rol"]         = None
+    st.session_state["usuario"]     = None
+
+if not st.session_state["autenticado"]:
+
+    st.markdown(
+        "<div style='max-width:380px;margin:80px auto 0 auto'>",
+        unsafe_allow_html=True
+    )
+    st.markdown("## 📦 WMS — Iniciar sesión")
+    st.markdown("---")
+
+    with st.form("form_login"):
+        usuario  = st.text_input("👤 Usuario")
+        password = st.text_input("🔑 Contraseña", type="password")
+        ok = st.form_submit_button("Ingresar", use_container_width=True)
+
+    if ok:
+        if do_login(usuario.strip(), password.strip()):
+            st.rerun()
+        else:
+            st.error("Usuario o contraseña incorrectos.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.stop()
+
 # ── Sidebar ───────────────────────────────────────────────────────────────────
+
+ROL = st.session_state["rol"]
+
+VISTAS_ADMIN  = ["📦  Stock", "🔍  Trazabilidad", "📦  Packing List", "⚠️  Merma"]
+VISTAS_CLIENTE = ["📦  Stock", "🔍  Trazabilidad", "📦  Packing List"]
+
+opciones_vista = VISTAS_ADMIN if ROL == "administrador" else VISTAS_CLIENTE
 
 with st.sidebar:
 
-    st.markdown("### 📦 WMS MASEF")
+    st.markdown("### 📦 WMS")
 
     st.markdown(
         "<small style='color:#64748b'>Warehouse Management System</small>",
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        f"<small style='color:#94a3b8'>👤 {st.session_state['usuario']} "
+        f"<span style='background:#1e3a5f;padding:2px 7px;border-radius:4px;"
+        f"font-size:10px;text-transform:uppercase'>{ROL}</span></small>",
         unsafe_allow_html=True
     )
 
@@ -300,13 +363,7 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    vista = st.radio("", [
-        "📦  Stock",
-        "🔍  Trazabilidad",
-        "📦  Packing List",
-        "⚠️  Merma",
-        "🚚  Despachos por Ingreso",
-    ], label_visibility="collapsed")
+    vista = st.radio("", opciones_vista, label_visibility="collapsed")
 
     st.markdown("---")
 
@@ -315,11 +372,12 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    if st.button(
-        "🔄  Recargar datos",
-        use_container_width=True
-    ):
+    if st.button("🔄  Recargar datos", use_container_width=True):
         st.cache_data.clear()
+        st.rerun()
+
+    if st.button("🚪  Cerrar sesión", use_container_width=True):
+        do_logout()
         st.rerun()
 
     st.markdown(
@@ -837,217 +895,3 @@ elif vista == "⚠️  Merma":
 
     botones_descarga(display, "merma")
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VISTA: DESPACHOS POR INGRESO
-# ══════════════════════════════════════════════════════════════════════════════
-
-elif vista == "🚚  Despachos por Ingreso":
-
-    st.markdown("## 🚚 Despachos por Ingreso")
-
-    st.caption(
-        "Para cada lote ingresado, muestra sus despachos por guía y fecha, más el stock resultante."
-    )
-
-    # ── Filtros ──
-    with st.form("form_despachos"):
-
-        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
-
-        with col1:
-            fecha_corte = st.date_input(
-                "📅 Fecha de corte",
-                value=date.today(),
-                min_value=df["FECHA"].min().date(),
-                max_value=date.today()
-            )
-
-        with col2:
-            buscar = st.text_input(
-                "🔎 Buscar SKU o descripción",
-                placeholder="ej: NUTELLA"
-            )
-
-        with col3:
-            estados_opts = ["Todos"] + sorted(
-                df["ESTADO"].dropna().unique().tolist()
-            )
-            f_estado = st.selectbox("🏷️ Estado", estados_opts)
-
-        with col4:
-            st.write("")
-            st.write("")
-            st.form_submit_button("🔍 Buscar", use_container_width=True)
-
-    # ── Preparar datos hasta fecha de corte ──
-    sub = df[df["FECHA"].dt.date <= fecha_corte].copy()
-
-    sub["SKU MASEF"]   = sub["SKU MASEF"].astype(str).str.strip()
-    sub["CTN"]         = sub["CTN"].astype(str).str.strip()
-    sub["ESTADO"]      = sub["ESTADO"].astype(str).str.strip()
-    sub["DESCRIPTION"] = sub["DESCRIPTION"].astype(str).str.strip()
-    sub["GUIA"]        = sub["GUIA"].astype(str).str.strip()
-
-    # ── Clave de agrupación según estado ──
-    def get_key(row):
-        if row["ESTADO"] == "GENERAL":
-            return (row["SKU MASEF"], row["CTN"], row["ESTADO"], "")
-        else:
-            vcto = pd.to_datetime(row["FECHA VCTO"], errors="coerce")
-            vcto_str = vcto.strftime("%Y-%m-%d") if not pd.isna(vcto) else ""
-            return (row["SKU MASEF"], row["CTN"], row["ESTADO"], vcto_str)
-
-    sub["_KEY"] = sub.apply(get_key, axis=1)
-
-    # ── Descripción por SKU ──
-    desc_map = (
-        sub[["SKU MASEF", "DESCRIPTION"]]
-        .query("DESCRIPTION != '' and DESCRIPTION != 'nan'")
-        .drop_duplicates(subset=["SKU MASEF"])
-        .set_index("SKU MASEF")["DESCRIPTION"]
-    )
-
-    # ── Fecha de ingreso por KEY: primera fecha con TOTAL UNIT > 0 ──
-    ingresos = sub[sub["TOTAL UNIT"] > 0].copy()
-    fecha_ingreso_map = (
-        ingresos
-        .sort_values("FECHA")
-        .groupby("_KEY")["FECHA"]
-        .first()
-        .dt.strftime("%Y-%m-%d")
-    )
-
-    # ── Salidas: movimientos con TOTAL UNIT < 0 ──
-    salidas = sub[sub["TOTAL UNIT"] < 0].copy()
-    salidas["FECHA_STR"] = salidas["FECHA"].dt.strftime("%Y-%m-%d")
-
-    # Columna multiindex: (FECHA DESPACHO, GUIA)
-    salidas["_COL"] = list(zip(salidas["FECHA_STR"], salidas["GUIA"]))
-
-    # ── Pivot: filas = KEY, columnas = (FECHA, GUIA), valores = suma TOTAL UNIT ──
-    if len(salidas) > 0:
-        pivot = (
-            salidas
-            .groupby(["_KEY", "_COL"])["TOTAL UNIT"]
-            .sum()
-            .unstack("_COL")
-            .fillna(0)
-            .astype(int)
-        )
-        # Ordenar columnas por fecha
-        pivot = pivot.reindex(sorted(pivot.columns, key=lambda x: x[0]), axis=1)
-    else:
-        pivot = pd.DataFrame()
-
-    # ── Stock neto por KEY ──
-    stock_neto = (
-        sub
-        .groupby("_KEY")["TOTAL UNIT"]
-        .sum()
-        .rename("Stock")
-    )
-
-    # ── Ingreso total por KEY ──
-    ingreso_total = (
-        ingresos
-        .groupby("_KEY")["TOTAL UNIT"]
-        .sum()
-        .rename("Ingreso")
-    )
-
-    # ── Construir tabla base con todas las KEYs ──
-    todas_keys = stock_neto.index.union(ingreso_total.index)
-    base = pd.DataFrame(index=todas_keys)
-    base.index.name = "_KEY"
-    base = base.join(ingreso_total).join(stock_neto).fillna(0)
-    base["Ingreso"] = base["Ingreso"].astype(int)
-    base["Stock"]   = base["Stock"].astype(int)
-
-    # Solo KEYs con stock o ingreso
-    base = base[base["Ingreso"] > 0]
-
-    # ── Unir pivot de salidas ──
-    if len(pivot) > 0:
-        tabla = base.join(pivot, how="left").fillna(0)
-    else:
-        tabla = base.copy()
-
-    # ── Agregar columnas fijas ──
-    tabla = tabla.reset_index()
-    tabla["SKU MASEF"]      = tabla["_KEY"].apply(lambda x: x[0])
-    tabla["CTN"]            = tabla["_KEY"].apply(lambda x: x[1])
-    tabla["ESTADO"]         = tabla["_KEY"].apply(lambda x: x[2])
-    tabla["FECHA VCTO"]     = tabla["_KEY"].apply(lambda x: x[3])
-    tabla["Descripción"]    = tabla["SKU MASEF"].map(desc_map).fillna("")
-    tabla["Fecha Ingreso"]  = tabla["_KEY"].map(fecha_ingreso_map).fillna("")
-
-    # ── Filtros de búsqueda ──
-    if buscar:
-        mask = (
-            tabla["SKU MASEF"].str.contains(buscar, case=False, na=False)
-            | tabla["Descripción"].str.contains(buscar, case=False, na=False)
-        )
-        tabla = tabla[mask]
-
-    if f_estado != "Todos":
-        tabla = tabla[tabla["ESTADO"] == f_estado]
-
-    # ── Columnas de despacho (multiindex) ──
-    cols_despacho = [c for c in tabla.columns if isinstance(c, tuple)]
-
-    # ── Armar DataFrame final para mostrar ──
-    cols_fijas = ["SKU MASEF", "Descripción", "CTN", "ESTADO", "FECHA VCTO", "Fecha Ingreso", "Ingreso"]
-    cols_stock = ["Stock"]
-
-    df_final = tabla[cols_fijas + cols_despacho + cols_stock].copy()
-
-    # Renombrar columnas fijas
-    df_final = df_final.rename(columns={
-        "SKU MASEF":     "SKU",
-        "FECHA VCTO":    "Vencimiento",
-        "Fecha Ingreso": "F. Ingreso",
-    })
-
-    # ── Convertir a MultiIndex en columnas para display ──
-    fixed_cols   = ["SKU", "Descripción", "CTN", "ESTADO", "Vencimiento", "F. Ingreso", "Ingreso"]
-    despacho_tuples = cols_despacho  # ya son (fecha, guia)
-    stock_tuple  = [("", "Stock")]
-
-    new_cols = (
-        [("", c) for c in fixed_cols]
-        + [("Despacho  " + t[0], t[1]) for t in despacho_tuples]
-        + stock_tuple
-    )
-
-    df_final.columns = pd.MultiIndex.from_tuples(new_cols)
-
-    # ── Métricas ──
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Lotes",         f"{len(df_final):,}")
-    m2.metric("Total Ingreso", f"{int(tabla['Ingreso'].sum()):,}" if len(tabla) else "0")
-    m3.metric("Stock actual",  f"{int(tabla['Stock'].sum()):,}"   if len(tabla) else "0")
-
-    st.divider()
-
-    st.markdown(f"**{len(df_final)} lotes encontrados**")
-
-    # ── Nota sobre columnas multiindex ──
-    st.caption("Las columnas de despacho muestran: Fecha despacho (nivel 1) → Guía (nivel 2) → Unidades salidas (negativo = salida).")
-
-    # Streamlit no renderiza MultiIndex bien en st.dataframe,
-    # así que aplanamos los headers para display
-    df_display = df_final.copy()
-    df_display.columns = [
-        b if not a.strip() else (f"{a.strip()} | {b}" if b.strip() else a.strip())
-        for a, b in df_display.columns
-    ]
-
-    st.dataframe(
-        df_display,
-        use_container_width=True,
-        hide_index=True,
-    )
-
-    # ── Exportar ──
-    botones_descarga(df_display, "despachos_por_ingreso")
