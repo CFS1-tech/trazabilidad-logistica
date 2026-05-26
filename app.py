@@ -109,7 +109,6 @@ def cargar_datos() -> pd.DataFrame:
     return df.dropna(subset=["FECHA"])
 
 @st.cache_data(ttl=300)
-
 def cargar_packinglist() -> pd.DataFrame:
 
     client = get_client()
@@ -140,101 +139,69 @@ def calcular_stock(
     ].copy()
 
     if excluir_tipos:
-
         sub = sub[
-            ~sub["TIPO DE MOVIMIENTO"].isin(
-                excluir_tipos
-            )
+            ~sub["TIPO DE MOVIMIENTO"].isin(excluir_tipos)
         ]
 
     # ─────────────────────────────────────────────
     # LIMPIAR CAMPOS
     # ─────────────────────────────────────────────
 
-    sub["SKU MASEF"] = (
-        sub["SKU MASEF"]
-        .astype(str)
-        .str.strip()
-    )
-
-    sub["CTN"] = (
-        sub["CTN"]
-        .astype(str)
-        .str.strip()
-    )
-
-    sub["ESTADO"] = (
-        sub["ESTADO"]
-        .astype(str)
-        .str.strip()
-    )
-
-    sub["DESCRIPTION"] = (
-        sub["DESCRIPTION"]
-        .astype(str)
-        .str.strip()
-    )
+    sub["SKU MASEF"]   = sub["SKU MASEF"].astype(str).str.strip()
+    sub["CTN"]         = sub["CTN"].astype(str).str.strip()
+    sub["ESTADO"]      = sub["ESTADO"].astype(str).str.strip()
+    sub["DESCRIPTION"] = sub["DESCRIPTION"].astype(str).str.strip()
 
     # ─────────────────────────────────────────────
     # MATRIZ SKU -> DESCRIPCIÓN
     # ─────────────────────────────────────────────
 
     matriz_sku = (
-        sub[
-            ["SKU MASEF", "DESCRIPTION"]
-        ]
+        sub[["SKU MASEF", "DESCRIPTION"]]
         .dropna()
-        .copy()
-    )
-
-    matriz_sku = matriz_sku[
-        matriz_sku["DESCRIPTION"] != ""
-    ]
-
-    matriz_sku = (
-        matriz_sku
-        .drop_duplicates(
-            subset=["SKU MASEF"]
-        )
+        .query("DESCRIPTION != ''")
+        .drop_duplicates(subset=["SKU MASEF"])
     )
 
     # ─────────────────────────────────────────────
-    # STOCK REAL
+    # PASO 1: SKUs con stock NETO > 0
+    # Solo los SKUs donde la suma total de TOTAL UNIT
+    # es mayor a 0 tienen stock real en almacén.
+    # ─────────────────────────────────────────────
+
+    neto_por_sku = (
+        sub
+        .groupby("SKU MASEF")["TOTAL UNIT"]
+        .sum()
+    )
+
+    skus_con_stock = neto_por_sku[neto_por_sku > 0].index
+
+    # ─────────────────────────────────────────────
+    # PASO 2: Filtrar solo filas de esos SKUs
+    # ─────────────────────────────────────────────
+
+    sub_valido = sub[sub["SKU MASEF"].isin(skus_con_stock)]
+
+    # ─────────────────────────────────────────────
+    # PASO 3: Agrupar por detalle y quedarse
+    # solo con combinaciones de stock positivo
     # ─────────────────────────────────────────────
 
     result = (
-        sub
+        sub_valido
         .groupby(
-            [
-                "SKU MASEF",
-                "CTN",
-                "ESTADO",
-                "FECHA VCTO"
-            ],
+            ["SKU MASEF", "CTN", "ESTADO", "FECHA VCTO"],
             dropna=False
         )["TOTAL UNIT"]
         .sum()
         .reset_index()
+        .rename(columns={"TOTAL UNIT": "Stock"})
     )
 
-    result = result.rename(
-        columns={
-            "TOTAL UNIT": "Stock"
-        }
-    )
+    result = result[result["Stock"] > 0].copy()
 
-    # ─────────────────────────────────────────────
-    # SOLO STOCK POSITIVO
-    # ─────────────────────────────────────────────
-
-    result = result[
-        result["Stock"] > 0
-    ]
-
-    result["Stock"] = (
-        result["Stock"]
-        .astype(int)
-    )
+    result["Stock"] = result["Stock"].astype(int)
 
     # ─────────────────────────────────────────────
     # AGREGAR DESCRIPCIÓN
@@ -251,21 +218,13 @@ def calcular_stock(
     # ─────────────────────────────────────────────
 
     result["FECHA VCTO"] = (
-        pd.to_datetime(
-            result["FECHA VCTO"],
-            errors="coerce"
-        )
+        pd.to_datetime(result["FECHA VCTO"], errors="coerce")
         .dt.strftime("%Y-%m-%d")
         .fillna("")
     )
 
-    result = result.sort_values(
-        "Stock",
-        ascending=False
-    )
+    return result.sort_values("Stock", ascending=False).reset_index(drop=True)
 
-    return result.reset_index(drop=True)
-    
 
 def to_excel(df_export: pd.DataFrame) -> bytes:
 
@@ -358,6 +317,7 @@ try:
 
     df = cargar_datos()
     packing_df = cargar_packinglist()
+
 except Exception as e:
 
     st.error(
@@ -365,10 +325,6 @@ except Exception as e:
     )
 
     st.stop()
-
-# ══════════════════════════════════════════════════════════════════════════════
-# VISTA: STOCK
-# ══════════════════════════════════════════════════════════════════════════════
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: STOCK
@@ -385,9 +341,7 @@ if vista == "📦  Stock":
     # ── Filtros ──
     with st.form("form_stock"):
 
-        col1, col2, col3, col4 = st.columns(
-            [2, 2, 2, 1]
-        )
+        col1, col2, col3, col4 = st.columns([2, 2, 2, 1])
 
         with col1:
 
@@ -430,50 +384,32 @@ if vista == "📦  Stock":
             )
 
     # ─────────────────────────────────────────────────────────────
-    # STOCK REAL HASTA FECHA FILTRADA
+    # MÉTRICAS GLOBALES
     # ─────────────────────────────────────────────────────────────
 
     sub_global = df[
         df["FECHA"].dt.date <= fecha_corte
     ].copy()
 
-    total_entradas = int(
-        sub_global[
-            sub_global["TOTAL UNIT"] > 0
-        ]["TOTAL UNIT"].sum()
-    )
-
-    total_salidas = int(
-        sub_global[
-            sub_global["TOTAL UNIT"] < 0
-        ]["TOTAL UNIT"].sum() * -1
-    )
-
-    # Stock neto REAL por SKU
+    # Stock neto por SKU
     neto_sku = (
         sub_global
         .groupby("SKU MASEF")["TOTAL UNIT"]
         .sum()
     )
 
-    # Solo SKUs positivos
-    skus_positivos = neto_sku[
-        neto_sku > 0
-    ].index
+    # Total neto en stock (solo SKUs positivos)
+    total_neto = int(neto_sku[neto_sku > 0].sum())
 
-    total_neto = int(
-        neto_sku[
-            neto_sku > 0
-        ].sum()
-    )
+    # SKUs con stock real
+    skus_positivos = neto_sku[neto_sku > 0].index
 
+    # Filtrar solo esos SKUs para métricas por estado
     df_positivos = sub_global[
-        sub_global["SKU MASEF"].isin(
-            skus_positivos
-        )
+        sub_global["SKU MASEF"].isin(skus_positivos)
     ].copy()
 
-    # SOLO ocultar MERMA visualmente
+    # Excluir MERMA del display de métricas por estado
     df_positivos = df_positivos[
         df_positivos["ESTADO"] != "MERMA"
     ]
@@ -484,23 +420,17 @@ if vista == "📦  Stock":
         .sum()
     )
 
-    por_estado = por_estado[
-        por_estado > 0
-    ]
+    por_estado = por_estado[por_estado > 0]
 
     # ── Métricas ──
-    cols_metrics = st.columns(
-        1 + len(por_estado)
-    )
+    cols_metrics = st.columns(1 + len(por_estado))
 
     cols_metrics[0].metric(
         "Total en stock",
         f"{total_neto:,}"
     )
 
-    for i, (estado, unidades) in enumerate(
-        por_estado.items()
-    ):
+    for i, (estado, unidades) in enumerate(por_estado.items()):
 
         cols_metrics[1 + i].metric(
             estado,
@@ -510,39 +440,30 @@ if vista == "📦  Stock":
     st.divider()
 
     # ─────────────────────────────────────────────────────────────
-    # CALCULAR STOCK REAL
+    # DETALLE DE STOCK CORREGIDO
     # ─────────────────────────────────────────────────────────────
 
-    stock_df = calcular_stock(
-        df,
-        fecha_corte
-    )
+    stock_df = calcular_stock(df, fecha_corte)
 
-    # SOLO ocultar MERMA visualmente
-    stock_df = stock_df[
-        stock_df["ESTADO"] != "MERMA"
-    ]
+    # Excluir MERMA del reporte de stock normal
+    stock_df = stock_df[stock_df["ESTADO"] != "MERMA"]
 
     # ── Buscar ──
     if buscar:
 
         mask = (
             stock_df["SKU MASEF"].str.contains(
-                buscar,
-                case=False,
-                na=False
+                buscar, case=False, na=False
             )
             |
             stock_df["DESCRIPTION"].str.contains(
-                buscar,
-                case=False,
-                na=False
+                buscar, case=False, na=False
             )
         )
 
         stock_df = stock_df[mask]
 
-    # ── Estado ──
+    # ── Filtro Estado ──
     if f_estado != "Todos":
 
         stock_df = stock_df[
@@ -551,54 +472,40 @@ if vista == "📦  Stock":
 
     # ── Tabla ──
     st.markdown(
-        f"**Detalle de stock** — {len(stock_df)} SKUs"
+        f"**Detalle de stock** — {len(stock_df)} registros"
     )
 
-    display = stock_df[
-        [
-            "SKU MASEF",
-            "DESCRIPTION",
-            "CTN",
-            "ESTADO",
-            "FECHA VCTO",
-            "Stock",
-        ]
-    ].rename(columns={
-    
-        "SKU MASEF": "SKU",
+    display = stock_df[[
+        "SKU MASEF",
+        "DESCRIPTION",
+        "CTN",
+        "ESTADO",
+        "FECHA VCTO",
+        "Stock",
+    ]].rename(columns={
+        "SKU MASEF":   "SKU",
         "DESCRIPTION": "Descripción",
-        "FECHA VCTO": "Vencimiento",
-        "Stock": "Unidades en Stock",
-    
+        "FECHA VCTO":  "Vencimiento",
+        "Stock":       "Unidades en Stock",
     })
 
-    max_stock = (
-        int(stock_df["Stock"].max())
-        if len(stock_df)
-        else 1
-    )
+    max_stock = int(stock_df["Stock"].max()) if len(stock_df) else 1
 
     st.dataframe(
         display,
         use_container_width=True,
         hide_index=True,
         column_config={
-
-            "Unidades en Stock":
-            st.column_config.ProgressColumn(
+            "Unidades en Stock": st.column_config.ProgressColumn(
                 "Unidades en Stock",
                 min_value=0,
                 max_value=max_stock,
                 format="%d"
             )
-
         }
     )
 
-    botones_descarga(
-        display,
-        "stock"
-    )
+    botones_descarga(display, "stock")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: TRAZABILIDAD
@@ -626,10 +533,7 @@ elif vista == "🔍  Trazabilidad":
                 .tolist()
             )
 
-            f_ctn = st.selectbox(
-                "📦 Contenedor",
-                contenedores
-            )
+            f_ctn = st.selectbox("📦 Contenedor", contenedores)
 
         with col2:
 
@@ -641,10 +545,7 @@ elif vista == "🔍  Trazabilidad":
                 .tolist()
             )
 
-            f_sku = st.selectbox(
-                "🏷️ SKU",
-                skus
-            )
+            f_sku = st.selectbox("🏷️ SKU", skus)
 
         with col3:
 
@@ -668,48 +569,24 @@ elif vista == "🔍  Trazabilidad":
     traz = df.copy()
 
     if f_ctn != "Todos":
-
-        traz = traz[
-            traz["CTN"] == f_ctn
-        ]
+        traz = traz[traz["CTN"] == f_ctn]
 
     if f_sku != "Todos":
-
-        traz = traz[
-            traz["SKU MASEF"] == f_sku
-        ]
+        traz = traz[traz["SKU MASEF"] == f_sku]
 
     traz = traz[
-        (
-            traz["FECHA"].dt.date >= fecha_desde
-        )
+        (traz["FECHA"].dt.date >= fecha_desde)
         &
-        (
-            traz["FECHA"].dt.date <= fecha_hasta
-        )
+        (traz["FECHA"].dt.date <= fecha_hasta)
     ]
 
-    traz = traz.sort_values(
-        "FECHA",
-        ascending=False
-    )
+    traz = traz.sort_values("FECHA", ascending=False)
 
     m1, m2, m3 = st.columns(3)
 
-    m1.metric(
-        "Movimientos",
-        f"{len(traz):,}"
-    )
-
-    m2.metric(
-        "SKUs",
-        f"{traz['SKU MASEF'].nunique():,}"
-    )
-
-    m3.metric(
-        "CTNs",
-        f"{traz['CTN'].nunique():,}"
-    )
+    m1.metric("Movimientos", f"{len(traz):,}")
+    m2.metric("SKUs",        f"{traz['SKU MASEF'].nunique():,}")
+    m3.metric("CTNs",        f"{traz['CTN'].nunique():,}")
 
     st.divider()
 
@@ -720,12 +597,9 @@ elif vista == "🔍  Trazabilidad":
         if "FECHA" in col.upper():
 
             try:
-
                 traz_display[col] = pd.to_datetime(
-                    traz_display[col],
-                    errors="coerce"
+                    traz_display[col], errors="coerce"
                 ).dt.strftime("%Y-%m-%d")
-
             except:
                 pass
 
@@ -735,10 +609,7 @@ elif vista == "🔍  Trazabilidad":
         hide_index=True
     )
 
-    botones_descarga(
-        traz_display,
-        "trazabilidad"
-    )
+    botones_descarga(traz_display, "trazabilidad")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: PACKING LIST
@@ -760,8 +631,7 @@ elif vista == "📦  Packing List":
 
             columnas_ctn = [
                 c for c in packing_df.columns
-                if "CTN" in c.upper()
-                or "CONTENEDOR" in c.upper()
+                if "CTN" in c.upper() or "CONTENEDOR" in c.upper()
             ]
 
             col_ctn = columnas_ctn[0] if columnas_ctn else packing_df.columns[0]
@@ -774,10 +644,7 @@ elif vista == "📦  Packing List":
                 .tolist()
             )
 
-            f_ctn = st.selectbox(
-                "📦 Contenedor",
-                ctns
-            )
+            f_ctn = st.selectbox("📦 Contenedor", ctns)
 
         with col2:
 
@@ -796,10 +663,7 @@ elif vista == "📦  Packing List":
                 .tolist()
             )
 
-            f_sku = st.selectbox(
-                "🏷️ SKU",
-                skus
-            )
+            f_sku = st.selectbox("🏷️ SKU", skus)
 
         st.form_submit_button(
             "🔍 Buscar",
@@ -809,43 +673,21 @@ elif vista == "📦  Packing List":
     pk = packing_df.copy()
 
     if f_ctn != "Todos":
-
-        pk = pk[
-            pk[col_ctn].astype(str) == str(f_ctn)
-        ]
+        pk = pk[pk[col_ctn].astype(str) == str(f_ctn)]
 
     if f_sku != "Todos":
-
-        pk = pk[
-            pk[col_sku].astype(str) == str(f_sku)
-        ]
+        pk = pk[pk[col_sku].astype(str) == str(f_sku)]
 
     m1, m2 = st.columns(2)
 
-    m1.metric(
-        "Registros",
-        f"{len(pk):,}"
-    )
-
-    m2.metric(
-        "SKUs",
-        f"{pk[col_sku].nunique():,}"
-    )
+    m1.metric("Registros", f"{len(pk):,}")
+    m2.metric("SKUs",      f"{pk[col_sku].nunique():,}")
 
     st.divider()
 
-    st.dataframe(
-        pk,
-        use_container_width=True,
-        hide_index=True
-    )
+    st.dataframe(pk, use_container_width=True, hide_index=True)
 
-    botones_descarga(
-        pk,
-        "packinglist"
-    )
-
-
+    botones_descarga(pk, "packinglist")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: MERMA
@@ -897,80 +739,53 @@ elif vista == "⚠️  Merma":
 
         mask = (
             merma_df["SKU MASEF"].str.contains(
-                buscar,
-                case=False,
-                na=False
+                buscar, case=False, na=False
             )
             |
             merma_df["DESCRIPTION"].str.contains(
-                buscar,
-                case=False,
-                na=False
+                buscar, case=False, na=False
             )
         )
 
         merma_df = merma_df[mask]
 
-    total_merma = int(
-        merma_df["Stock"].sum()
-    ) if len(merma_df) else 0
+    total_merma = int(merma_df["Stock"].sum()) if len(merma_df) else 0
 
     m1, m2 = st.columns(2)
 
-    m1.metric(
-        "Total merma",
-        f"{total_merma:,}"
-    )
-
-    m2.metric(
-        "SKUs con merma",
-        f"{len(merma_df):,}"
-    )
+    m1.metric("Total merma",    f"{total_merma:,}")
+    m2.metric("SKUs con merma", f"{len(merma_df):,}")
 
     st.divider()
 
-    display = merma_df[
-        [
-            "SKU MASEF",
-            "DESCRIPTION",
-            "CTN",
-            "ESTADO",
-            "FECHA VCTO",
-            "Stock"
-        ]
-    ].rename(columns={
-
-        "SKU MASEF": "SKU",
+    display = merma_df[[
+        "SKU MASEF",
+        "DESCRIPTION",
+        "CTN",
+        "ESTADO",
+        "FECHA VCTO",
+        "Stock"
+    ]].rename(columns={
+        "SKU MASEF":   "SKU",
         "DESCRIPTION": "Descripción",
-        "FECHA VCTO": "Vencimiento",
-        "Stock": "Unidades"
-
+        "FECHA VCTO":  "Vencimiento",
+        "Stock":       "Unidades"
     })
 
-    max_merma = (
-        int(merma_df["Stock"].max())
-        if len(merma_df)
-        else 1
-    )
+    max_merma = int(merma_df["Stock"].max()) if len(merma_df) else 1
 
     st.dataframe(
         display,
         use_container_width=True,
         hide_index=True,
         column_config={
-
-            "Unidades":
-            st.column_config.ProgressColumn(
+            "Unidades": st.column_config.ProgressColumn(
                 "Unidades",
                 min_value=0,
                 max_value=max_merma,
                 format="%d"
             )
-
         }
     )
 
-    botones_descarga(
-        display,
-        "merma"
-    )
+    botones_descarga(display, "merma")
