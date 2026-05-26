@@ -342,6 +342,16 @@ except Exception as e:
 
     st.stop()
 
+# ── Columnas clave del packing list (detección global) ───────────────────────
+col_ctn_pk = next(
+    (c for c in packing_df.columns if "CTN" in c.upper() or "CONTENEDOR" in c.upper()),
+    packing_df.columns[0]
+)
+col_sku_pk = next(
+    (c for c in packing_df.columns if "SKU" in c.upper()),
+    packing_df.columns[0]
+)
+
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: STOCK
 # ══════════════════════════════════════════════════════════════════════════════
@@ -493,9 +503,9 @@ if vista == "📦  Stock":
 
     # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
     pk_presentacion = (
-        packing_df[["CTN", col_sku, "CASE PACK IN"]]
+        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
         .copy()
-        .rename(columns={col_sku: "SKU MASEF"})
+        .rename(columns={col_sku_pk: "SKU MASEF"})
     )
     pk_presentacion["CTN"]      = pk_presentacion["CTN"].astype(str).str.strip()
     pk_presentacion["SKU MASEF"]= pk_presentacion["SKU MASEF"].astype(str).str.strip()
