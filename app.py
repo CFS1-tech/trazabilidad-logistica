@@ -1299,6 +1299,22 @@ elif vista == "🔍  Trazabilidad":
 
     st.divider()
 
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
+    pk_pres_traz = (
+        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
+        .copy()
+        .rename(columns={col_sku_pk: "SKU MASEF"})
+    )
+    pk_pres_traz["CTN"]          = pk_pres_traz["CTN"].astype(str).str.strip()
+    pk_pres_traz["SKU MASEF"]    = pk_pres_traz["SKU MASEF"].astype(str).str.strip()
+    pk_pres_traz["CASE PACK IN"] = pd.to_numeric(pk_pres_traz["CASE PACK IN"], errors="coerce")
+    pk_pres_traz = pk_pres_traz.drop_duplicates(subset=["CTN", "SKU MASEF"])
+
+    traz["CTN"]       = traz["CTN"].astype(str).str.strip()
+    traz["SKU MASEF"] = traz["SKU MASEF"].astype(str).str.strip()
+
+    traz = traz.merge(pk_pres_traz, on=["CTN", "SKU MASEF"], how="left")
+
     traz_display = traz.copy()
 
     for col in traz_display.columns:
@@ -1311,6 +1327,14 @@ elif vista == "🔍  Trazabilidad":
                 ).dt.strftime("%Y-%m-%d")
             except:
                 pass
+
+    # Reordenar: Presentación justo después de SKU MASEF
+    if "CASE PACK IN" in traz_display.columns:
+        cols = list(traz_display.columns)
+        cols.remove("CASE PACK IN")
+        idx = cols.index("SKU MASEF") + 1 if "SKU MASEF" in cols else len(cols)
+        cols.insert(idx, "CASE PACK IN")
+        traz_display = traz_display[cols].rename(columns={"CASE PACK IN": "Presentación"})
 
     st.dataframe(
         traz_display,
@@ -1402,6 +1426,22 @@ elif vista == "🚚  Despachos":
     cols_excluir = [c for c in desp.columns if c.upper() in ["OBS", "OBSERVACION", "OBSERVACIONES"]]
     desp = desp.drop(columns=cols_excluir, errors="ignore")
 
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
+    pk_pres_desp = (
+        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
+        .copy()
+        .rename(columns={col_sku_pk: "SKU MASEF"})
+    )
+    pk_pres_desp["CTN"]          = pk_pres_desp["CTN"].astype(str).str.strip()
+    pk_pres_desp["SKU MASEF"]    = pk_pres_desp["SKU MASEF"].astype(str).str.strip()
+    pk_pres_desp["CASE PACK IN"] = pd.to_numeric(pk_pres_desp["CASE PACK IN"], errors="coerce")
+    pk_pres_desp = pk_pres_desp.drop_duplicates(subset=["CTN", "SKU MASEF"])
+
+    desp["CTN"]       = desp["CTN"].astype(str).str.strip()
+    desp["SKU MASEF"] = desp["SKU MASEF"].astype(str).str.strip()
+
+    desp = desp.merge(pk_pres_desp, on=["CTN", "SKU MASEF"], how="left")
+
     # ── Métricas ──
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("🚚 Despachos",         f"{len(desp):,}")
@@ -1421,6 +1461,14 @@ elif vista == "🚚  Despachos":
                 ).dt.strftime("%d/%m/%Y").fillna("")
             except:
                 pass
+
+    # Reordenar: Presentación justo después de SKU MASEF
+    if "CASE PACK IN" in desp_display.columns:
+        cols = list(desp_display.columns)
+        cols.remove("CASE PACK IN")
+        idx = cols.index("SKU MASEF") + 1 if "SKU MASEF" in cols else len(cols)
+        cols.insert(idx, "CASE PACK IN")
+        desp_display = desp_display[cols].rename(columns={"CASE PACK IN": "Presentación"})
 
     st.markdown(
         f"""<div style='display:flex;align-items:center;justify-content:space-between;
