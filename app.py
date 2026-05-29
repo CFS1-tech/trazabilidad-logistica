@@ -975,6 +975,29 @@ elif vista == "📦  Stock":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Filtro Proveedor (fuera del form para reactividad) ──
+    if col_proveedor_pk:
+        provs_stock_opts = ["Todos"] + sorted(
+            packing_df[col_proveedor_pk]
+            .dropna().astype(str).str.strip()
+            .unique().tolist()
+        )
+        f_prov_stock = st.selectbox("🏭 Proveedor", provs_stock_opts, key="prov_stock")
+    else:
+        f_prov_stock = "Todos"
+
+    # CTNs disponibles según proveedor seleccionado
+    if f_prov_stock != "Todos" and col_proveedor_pk:
+        ctns_del_prov = (
+            packing_df[packing_df[col_proveedor_pk].astype(str).str.strip() == f_prov_stock]
+            [col_ctn_pk].astype(str).str.strip().unique().tolist()
+        )
+        ctns_opts_stock = ["Todos"] + sorted(
+            c for c in df["CTN"].dropna().astype(str).unique() if c in ctns_del_prov
+        )
+    else:
+        ctns_opts_stock = ["Todos"] + sorted(df["CTN"].dropna().astype(str).unique().tolist())
+
     # ── Filtros ──
     with st.form("form_stock"):
 
@@ -1012,29 +1035,10 @@ elif vista == "📦  Stock":
 
         with col4:
 
-            ctns_opts = ["Todos"] + sorted(
-                df["CTN"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-
             f_ctn_stock = st.selectbox(
                 "📦 Contenedor",
-                ctns_opts
+                ctns_opts_stock
             )
-
-        # ── Fila 2: Proveedor ──
-        if col_proveedor_pk:
-            provs_stock_opts = ["Todos"] + sorted(
-                packing_df[col_proveedor_pk]
-                .dropna().astype(str).str.strip()
-                .unique().tolist()
-            )
-            f_prov_stock = st.selectbox("🏭 Proveedor", provs_stock_opts)
-        else:
-            f_prov_stock = "Todos"
 
         st.form_submit_button(
             "🔍 Buscar",
@@ -1219,21 +1223,36 @@ elif vista == "🔍  Trazabilidad":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Filtro Proveedor (fuera del form para reactividad) ──
+    if col_proveedor_pk:
+        provs_traz_opts = ["Todos"] + sorted(
+            packing_df[col_proveedor_pk]
+            .dropna().astype(str).str.strip()
+            .unique().tolist()
+        )
+        f_prov_traz = st.selectbox("🏭 Proveedor", provs_traz_opts, key="prov_traz")
+    else:
+        f_prov_traz = "Todos"
+
+    # CTNs disponibles según proveedor seleccionado
+    if f_prov_traz != "Todos" and col_proveedor_pk:
+        ctns_del_prov_traz = (
+            packing_df[packing_df[col_proveedor_pk].astype(str).str.strip() == f_prov_traz]
+            [col_ctn_pk].astype(str).str.strip().unique().tolist()
+        )
+        ctns_opts_traz = ["Todos"] + sorted(
+            c for c in df["CTN"].dropna().astype(str).unique() if c in ctns_del_prov_traz
+        )
+    else:
+        ctns_opts_traz = ["Todos"] + sorted(df["CTN"].dropna().astype(str).unique().tolist())
+
     with st.form("form_trazabilidad"):
 
         col1, col2, col3, col4 = st.columns(4)
 
         with col1:
 
-            contenedores = ["Todos"] + sorted(
-                df["CTN"]
-                .dropna()
-                .astype(str)
-                .unique()
-                .tolist()
-            )
-
-            f_ctn = st.selectbox("📦 Contenedor", contenedores)
+            f_ctn = st.selectbox("📦 Contenedor", ctns_opts_traz)
 
         with col2:
 
@@ -1286,17 +1305,6 @@ elif vista == "🔍  Trazabilidad":
                 "📅 Hasta",
                 value=date.today()
             )
-
-        # ── Fila 3: Proveedor ──
-        if col_proveedor_pk:
-            provs_traz_opts = ["Todos"] + sorted(
-                packing_df[col_proveedor_pk]
-                .dropna().astype(str).str.strip()
-                .unique().tolist()
-            )
-            f_prov_traz = st.selectbox("🏭 Proveedor", provs_traz_opts)
-        else:
-            f_prov_traz = "Todos"
 
         st.form_submit_button(
             "🔍 Buscar",
@@ -1398,16 +1406,36 @@ elif vista == "🚚  Despachos":
     </div>
     """, unsafe_allow_html=True)
 
+    # ── Filtro Proveedor (fuera del form para reactividad) ──
+    if col_proveedor_pk:
+        provs_desp_opts = ["Todos"] + sorted(
+            packing_df[col_proveedor_pk]
+            .dropna().astype(str).str.strip()
+            .unique().tolist()
+        )
+        f_prov_desp = st.selectbox("🏭 Proveedor", provs_desp_opts, key="prov_desp")
+    else:
+        f_prov_desp = "Todos"
+
+    # CTNs disponibles según proveedor seleccionado
+    if f_prov_desp != "Todos" and col_proveedor_pk:
+        ctns_del_prov_desp = (
+            packing_df[packing_df[col_proveedor_pk].astype(str).str.strip() == f_prov_desp]
+            [col_ctn_pk].astype(str).str.strip().unique().tolist()
+        )
+        ctns_opts_desp = ["Todos"] + sorted(
+            c for c in df["CTN"].dropna().astype(str).unique() if c in ctns_del_prov_desp
+        )
+    else:
+        ctns_opts_desp = ["Todos"] + sorted(df["CTN"].dropna().astype(str).unique().tolist())
+
     # ── Filtros ──
     with st.form("form_despachos"):
 
         col1, col2, col3 = st.columns(3)
 
         with col1:
-            ctns_d = ["Todos"] + sorted(
-                df["CTN"].dropna().astype(str).unique().tolist()
-            )
-            f_ctn_d = st.selectbox("📦 Contenedor", ctns_d)
+            f_ctn_d = st.selectbox("📦 Contenedor", ctns_opts_desp)
 
         with col2:
             skus_d = ["Todos"] + sorted(
@@ -1436,17 +1464,6 @@ elif vista == "🚚  Despachos":
                 "📅 Hasta",
                 value=date.today()
             )
-
-        # ── Fila 3: Proveedor ──
-        if col_proveedor_pk:
-            provs_desp_opts = ["Todos"] + sorted(
-                packing_df[col_proveedor_pk]
-                .dropna().astype(str).str.strip()
-                .unique().tolist()
-            )
-            f_prov_desp = st.selectbox("🏭 Proveedor", provs_desp_opts)
-        else:
-            f_prov_desp = "Todos"
 
         st.form_submit_button("🔍 Buscar", use_container_width=True)
 
