@@ -619,6 +619,20 @@ col_sku_pk = next(
     (c for c in packing_df.columns if "SKU" in c.upper()),
     packing_df.columns[0]
 )
+col_proveedor_pk = next(
+    (c for c in packing_df.columns if "PROVEEDOR" in c.upper() or "SUPPLIER" in c.upper() or "VENDOR" in c.upper()),
+    None
+)
+
+# ── Tabla auxiliar del packing list: CTN + SKU → extras ──────────────────────
+def _build_pk_aux(cols_extra: list) -> pd.DataFrame:
+    """Construye un DF del packing list con las columnas extra solicitadas."""
+    cols_base = ["CTN", col_sku_pk]
+    cols_ok   = cols_base + [c for c in cols_extra if c and c in packing_df.columns]
+    aux = packing_df[cols_ok].copy().rename(columns={col_sku_pk: "SKU MASEF"})
+    aux["CTN"]       = aux["CTN"].astype(str).str.strip()
+    aux["SKU MASEF"] = aux["SKU MASEF"].astype(str).str.strip()
+    return aux.drop_duplicates(subset=["CTN", "SKU MASEF"])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1011,6 +1025,17 @@ elif vista == "📦  Stock":
                 ctns_opts
             )
 
+        # ── Fila 2: Proveedor ──
+        if col_proveedor_pk:
+            provs_stock_opts = ["Todos"] + sorted(
+                packing_df[col_proveedor_pk]
+                .dropna().astype(str).str.strip()
+                .unique().tolist()
+            )
+            f_prov_stock = st.selectbox("🏭 Proveedor", provs_stock_opts)
+        else:
+            f_prov_stock = "Todos"
+
         st.form_submit_button(
             "🔍 Buscar",
             use_container_width=True
@@ -1126,40 +1151,38 @@ elif vista == "📦  Stock":
         unsafe_allow_html=True
     )
 
-    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
-    pk_presentacion = (
-        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
-        .copy()
-        .rename(columns={col_sku_pk: "SKU MASEF"})
-    )
-    pk_presentacion["CTN"]      = pk_presentacion["CTN"].astype(str).str.strip()
-    pk_presentacion["SKU MASEF"]= pk_presentacion["SKU MASEF"].astype(str).str.strip()
-    pk_presentacion["CASE PACK IN"] = pd.to_numeric(
-        pk_presentacion["CASE PACK IN"], errors="coerce"
-    )
-    pk_presentacion = pk_presentacion.drop_duplicates(subset=["CTN", "SKU MASEF"])
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) + PROVEEDOR ──
+    pk_presentacion = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+    if "CASE PACK IN" in pk_presentacion.columns:
+        pk_presentacion["CASE PACK IN"] = pd.to_numeric(
+            pk_presentacion["CASE PACK IN"], errors="coerce"
+        )
 
-    stock_df = stock_df.merge(
-        pk_presentacion,
-        on=["CTN", "SKU MASEF"],
-        how="left"
-    )
+    stock_df = stock_df.merge(pk_presentacion, on=["CTN", "SKU MASEF"], how="left")
 
-    display = stock_df[[
-        "SKU MASEF",
-        "DESCRIPTION",
-        "CTN",
-        "ESTADO",
-        "FECHA VCTO",
-        "CASE PACK IN",
-        "Stock",
-    ]].rename(columns={
-        "SKU MASEF":    "SKU",
-        "DESCRIPTION":  "Descripción",
-        "FECHA VCTO":   "Vencimiento",
-        "CASE PACK IN": "Presentación",
-        "Stock":        "Unidades en Stock",
-    })
+    # ── Filtro Proveedor ──
+    if f_prov_stock != "Todos" and col_proveedor_pk and col_proveedor_pk in stock_df.columns:
+        stock_df = stock_df[
+            stock_df[col_proveedor_pk].astype(str).str.strip() == f_prov_stock
+        ]
+
+    # ── Columnas para display ──
+    cols_display_stock = ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO"]
+    rename_stock = {
+        "SKU MASEF":   "SKU",
+        "DESCRIPTION": "Descripción",
+        "FECHA VCTO":  "Vencimiento",
+        "Stock":       "Unidades en Stock",
+    }
+    if col_proveedor_pk and col_proveedor_pk in stock_df.columns:
+        cols_display_stock.append(col_proveedor_pk)
+        rename_stock[col_proveedor_pk] = "Proveedor"
+    if "CASE PACK IN" in stock_df.columns:
+        cols_display_stock.append("CASE PACK IN")
+        rename_stock["CASE PACK IN"] = "Presentación"
+    cols_display_stock.append("Stock")
+
+    display = stock_df[cols_display_stock].rename(columns=rename_stock)
 
     max_stock = int(stock_df["Stock"].max()) if len(stock_df) else 1
 
@@ -1264,6 +1287,17 @@ elif vista == "🔍  Trazabilidad":
                 value=date.today()
             )
 
+        # ── Fila 3: Proveedor ──
+        if col_proveedor_pk:
+            provs_traz_opts = ["Todos"] + sorted(
+                packing_df[col_proveedor_pk]
+                .dropna().astype(str).str.strip()
+                .unique().tolist()
+            )
+            f_prov_traz = st.selectbox("🏭 Proveedor", provs_traz_opts)
+        else:
+            f_prov_traz = "Todos"
+
         st.form_submit_button(
             "🔍 Buscar",
             use_container_width=True
@@ -1299,21 +1333,19 @@ elif vista == "🔍  Trazabilidad":
 
     st.divider()
 
-    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
-    pk_pres_traz = (
-        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
-        .copy()
-        .rename(columns={col_sku_pk: "SKU MASEF"})
-    )
-    pk_pres_traz["CTN"]          = pk_pres_traz["CTN"].astype(str).str.strip()
-    pk_pres_traz["SKU MASEF"]    = pk_pres_traz["SKU MASEF"].astype(str).str.strip()
-    pk_pres_traz["CASE PACK IN"] = pd.to_numeric(pk_pres_traz["CASE PACK IN"], errors="coerce")
-    pk_pres_traz = pk_pres_traz.drop_duplicates(subset=["CTN", "SKU MASEF"])
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) + PROVEEDOR ──
+    pk_pres_traz = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+    if "CASE PACK IN" in pk_pres_traz.columns:
+        pk_pres_traz["CASE PACK IN"] = pd.to_numeric(pk_pres_traz["CASE PACK IN"], errors="coerce")
 
     traz["CTN"]       = traz["CTN"].astype(str).str.strip()
     traz["SKU MASEF"] = traz["SKU MASEF"].astype(str).str.strip()
 
     traz = traz.merge(pk_pres_traz, on=["CTN", "SKU MASEF"], how="left")
+
+    # ── Filtro Proveedor ──
+    if f_prov_traz != "Todos" and col_proveedor_pk and col_proveedor_pk in traz.columns:
+        traz = traz[traz[col_proveedor_pk].astype(str).str.strip() == f_prov_traz]
 
     traz_display = traz.copy()
 
@@ -1328,13 +1360,17 @@ elif vista == "🔍  Trazabilidad":
             except:
                 pass
 
-    # Reordenar: Presentación justo después de SKU MASEF
-    if "CASE PACK IN" in traz_display.columns:
-        cols = list(traz_display.columns)
-        cols.remove("CASE PACK IN")
-        idx = cols.index("SKU MASEF") + 1 if "SKU MASEF" in cols else len(cols)
-        cols.insert(idx, "CASE PACK IN")
-        traz_display = traz_display[cols].rename(columns={"CASE PACK IN": "Presentación"})
+    # Reordenar: Presentación y Proveedor justo después de SKU MASEF
+    rename_traz = {}
+    cols_t = list(traz_display.columns)
+    insert_after = cols_t.index("SKU MASEF") + 1 if "SKU MASEF" in cols_t else len(cols_t)
+    for col_extra, label in [("CASE PACK IN", "Presentación"), (col_proveedor_pk, "Proveedor")]:
+        if col_extra and col_extra in cols_t:
+            cols_t.remove(col_extra)
+            cols_t.insert(insert_after, col_extra)
+            rename_traz[col_extra] = label
+            insert_after += 1
+    traz_display = traz_display[cols_t].rename(columns=rename_traz)
 
     st.dataframe(
         traz_display,
@@ -1401,6 +1437,17 @@ elif vista == "🚚  Despachos":
                 value=date.today()
             )
 
+        # ── Fila 3: Proveedor ──
+        if col_proveedor_pk:
+            provs_desp_opts = ["Todos"] + sorted(
+                packing_df[col_proveedor_pk]
+                .dropna().astype(str).str.strip()
+                .unique().tolist()
+            )
+            f_prov_desp = st.selectbox("🏭 Proveedor", provs_desp_opts)
+        else:
+            f_prov_desp = "Todos"
+
         st.form_submit_button("🔍 Buscar", use_container_width=True)
 
     # ── Filtrar solo SALIDAS ──
@@ -1426,21 +1473,19 @@ elif vista == "🚚  Despachos":
     cols_excluir = [c for c in desp.columns if c.upper() in ["OBS", "OBSERVACION", "OBSERVACIONES"]]
     desp = desp.drop(columns=cols_excluir, errors="ignore")
 
-    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) ──
-    pk_pres_desp = (
-        packing_df[["CTN", col_sku_pk, "CASE PACK IN"]]
-        .copy()
-        .rename(columns={col_sku_pk: "SKU MASEF"})
-    )
-    pk_pres_desp["CTN"]          = pk_pres_desp["CTN"].astype(str).str.strip()
-    pk_pres_desp["SKU MASEF"]    = pk_pres_desp["SKU MASEF"].astype(str).str.strip()
-    pk_pres_desp["CASE PACK IN"] = pd.to_numeric(pk_pres_desp["CASE PACK IN"], errors="coerce")
-    pk_pres_desp = pk_pres_desp.drop_duplicates(subset=["CTN", "SKU MASEF"])
+    # ── Merge con PACKINGLIST para traer CASE PACK IN (presentación) + PROVEEDOR ──
+    pk_pres_desp = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+    if "CASE PACK IN" in pk_pres_desp.columns:
+        pk_pres_desp["CASE PACK IN"] = pd.to_numeric(pk_pres_desp["CASE PACK IN"], errors="coerce")
 
     desp["CTN"]       = desp["CTN"].astype(str).str.strip()
     desp["SKU MASEF"] = desp["SKU MASEF"].astype(str).str.strip()
 
     desp = desp.merge(pk_pres_desp, on=["CTN", "SKU MASEF"], how="left")
+
+    # ── Filtro Proveedor ──
+    if f_prov_desp != "Todos" and col_proveedor_pk and col_proveedor_pk in desp.columns:
+        desp = desp[desp[col_proveedor_pk].astype(str).str.strip() == f_prov_desp]
 
     # ── Métricas ──
     m1, m2, m3, m4 = st.columns(4)
@@ -1462,13 +1507,17 @@ elif vista == "🚚  Despachos":
             except:
                 pass
 
-    # Reordenar: Presentación justo después de SKU MASEF
-    if "CASE PACK IN" in desp_display.columns:
-        cols = list(desp_display.columns)
-        cols.remove("CASE PACK IN")
-        idx = cols.index("SKU MASEF") + 1 if "SKU MASEF" in cols else len(cols)
-        cols.insert(idx, "CASE PACK IN")
-        desp_display = desp_display[cols].rename(columns={"CASE PACK IN": "Presentación"})
+    # Reordenar: Presentación y Proveedor justo después de SKU MASEF
+    rename_desp = {}
+    cols_d = list(desp_display.columns)
+    insert_after_d = cols_d.index("SKU MASEF") + 1 if "SKU MASEF" in cols_d else len(cols_d)
+    for col_extra, label in [("CASE PACK IN", "Presentación"), (col_proveedor_pk, "Proveedor")]:
+        if col_extra and col_extra in cols_d:
+            cols_d.remove(col_extra)
+            cols_d.insert(insert_after_d, col_extra)
+            rename_desp[col_extra] = label
+            insert_after_d += 1
+    desp_display = desp_display[cols_d].rename(columns=rename_desp)
 
     st.markdown(
         f"""<div style='display:flex;align-items:center;justify-content:space-between;
@@ -1562,6 +1611,17 @@ elif vista == "📦  Packing List":
 
             f_sku = st.selectbox("🏷️ SKU", skus)
 
+        # ── Fila 2: Proveedor ──
+        if col_proveedor_pk:
+            provs_pk_opts = ["Todos"] + sorted(
+                packing_df[col_proveedor_pk]
+                .dropna().astype(str).str.strip()
+                .unique().tolist()
+            )
+            f_prov_pk = st.selectbox("🏭 Proveedor", provs_pk_opts)
+        else:
+            f_prov_pk = "Todos"
+
         st.form_submit_button(
             "🔍 Buscar",
             use_container_width=True
@@ -1574,6 +1634,9 @@ elif vista == "📦  Packing List":
 
     if f_sku != "Todos":
         pk = pk[pk[col_sku].astype(str) == str(f_sku)]
+
+    if f_prov_pk != "Todos" and col_proveedor_pk and col_proveedor_pk in pk.columns:
+        pk = pk[pk[col_proveedor_pk].astype(str).str.strip() == f_prov_pk]
 
     m1, m2 = st.columns(2)
 
@@ -1606,7 +1669,7 @@ elif vista == "⚠️  Merma":
     # ── Filtros ──
     with st.form("form_merma"):
 
-        col1, col2, col3 = st.columns([2, 2, 1])
+        col1, col2 = st.columns([2, 2])
 
         with col1:
 
@@ -1621,15 +1684,21 @@ elif vista == "⚠️  Merma":
                 "🔎 Buscar SKU o descripción"
             )
 
-        with col3:
-
-            st.write("")
-            st.write("")
-
-            st.form_submit_button(
-                "🔍 Buscar",
-                use_container_width=True
+        # ── Fila 2: Proveedor ──
+        if col_proveedor_pk:
+            provs_merma_opts = ["Todos"] + sorted(
+                packing_df[col_proveedor_pk]
+                .dropna().astype(str).str.strip()
+                .unique().tolist()
             )
+            f_prov_merma = st.selectbox("🏭 Proveedor", provs_merma_opts)
+        else:
+            f_prov_merma = "Todos"
+
+        st.form_submit_button(
+            "🔍 Buscar",
+            use_container_width=True
+        )
 
     # ── SOLO MERMA ──
     merma_df = calcular_stock(
@@ -1651,6 +1720,16 @@ elif vista == "⚠️  Merma":
 
         merma_df = merma_df[mask]
 
+    # ── Merge con PACKINGLIST para traer PROVEEDOR ──
+    pk_merma = _build_pk_aux([col_proveedor_pk])
+    merma_df["CTN"]       = merma_df["CTN"].astype(str).str.strip()
+    merma_df["SKU MASEF"] = merma_df["SKU MASEF"].astype(str).str.strip()
+    merma_df = merma_df.merge(pk_merma, on=["CTN", "SKU MASEF"], how="left")
+
+    # ── Filtro Proveedor ──
+    if f_prov_merma != "Todos" and col_proveedor_pk and col_proveedor_pk in merma_df.columns:
+        merma_df = merma_df[merma_df[col_proveedor_pk].astype(str).str.strip() == f_prov_merma]
+
     total_merma = int(merma_df["Stock"].sum()) if len(merma_df) else 0
 
     m1, m2 = st.columns(2)
@@ -1660,19 +1739,20 @@ elif vista == "⚠️  Merma":
 
     st.divider()
 
-    display = merma_df[[
-        "SKU MASEF",
-        "DESCRIPTION",
-        "CTN",
-        "ESTADO",
-        "FECHA VCTO",
-        "Stock"
-    ]].rename(columns={
+    # ── Columnas display con Proveedor si existe ──
+    cols_merma_display = ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO"]
+    rename_merma = {
         "SKU MASEF":   "SKU",
         "DESCRIPTION": "Descripción",
         "FECHA VCTO":  "Vencimiento",
-        "Stock":       "Unidades"
-    })
+        "Stock":       "Unidades",
+    }
+    if col_proveedor_pk and col_proveedor_pk in merma_df.columns:
+        cols_merma_display.append(col_proveedor_pk)
+        rename_merma[col_proveedor_pk] = "Proveedor"
+    cols_merma_display.append("Stock")
+
+    display = merma_df[cols_merma_display].rename(columns=rename_merma)
 
     max_merma = int(merma_df["Stock"].max()) if len(merma_df) else 1
 
