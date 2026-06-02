@@ -3,6 +3,7 @@ app.py  —  WMS en Streamlit
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import plotly.express as px
 import gspread
@@ -566,17 +567,30 @@ if "nav_rep_abierto" not in st.session_state:
 if "nav_op_abierto"  not in st.session_state:
     st.session_state["nav_op_abierto"]  = False
 
-# Índices de botones para aplicar estilos vía JS:
-# 0 = btn_sec_rep
-# 1..N = ítems de reportes (si abierto)
-# N+1 = btn_sec_op  (si existe)
-# N+2.. = ítems de operaciones (si abierto)
+# ── Leer click desde query_params ─────────────────────────────────────────────
+_qp = st.query_params
+if "nav" in _qp:
+    _val = _qp["nav"]
+    if _val == "__toggle_rep__":
+        st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
+        st.query_params.clear()
+        st.rerun()
+    elif _val == "__toggle_op__":
+        st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
+        st.query_params.clear()
+        st.rerun()
+    else:
+        todas = reportes_opts + operaciones_opts
+        if _val in todas:
+            st.session_state["nav_vista"] = _val
+        st.query_params.clear()
+        st.rerun()
 
 with st.sidebar:
 
     # ── Logo ──────────────────────────────────────────────────────────────────
     st.markdown("""
-    <div style="padding:20px 4px 8px;text-align:center">
+    <div style="padding:16px 4px 8px;text-align:center">
       <div style="font-size:36px">📦</div>
       <div style="font-size:18px;font-weight:700;color:#e2e8f0;letter-spacing:-.01em">WMS</div>
       <div style="font-size:10px;color:#64748b;text-transform:uppercase;
@@ -588,7 +602,7 @@ with st.sidebar:
     rol_color = "#3b82f6" if ROL == "administrador" else "#10b981"
     st.markdown(
         f"""<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
-                        border-radius:8px;padding:10px 12px;margin:8px 0 16px">
+                        border-radius:8px;padding:10px 12px;margin:8px 0 14px">
               <div style="font-size:11px;color:#94a3b8;margin-bottom:2px">Sesión activa</div>
               <div style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:13px;color:#e2e8f0;font-weight:600">
@@ -602,132 +616,73 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── Marcador de inicio del menú ───────────────────────────────────────────
-    st.markdown('<div id="wms-nav-start"></div>', unsafe_allow_html=True)
+    # ── Menú HTML real via components ─────────────────────────────────────────
+    vista_actual  = st.session_state["nav_vista"]
+    rep_abierto   = st.session_state["nav_rep_abierto"]
+    op_abierto    = st.session_state["nav_op_abierto"]
 
-    # ── Botón cabecera REPORTES ───────────────────────────────────────────────
-    rep_icon = "▼" if st.session_state["nav_rep_abierto"] else "▶"
-    if st.button(f"{rep_icon}  📋  Reportes", use_container_width=True, key="btn_sec_rep"):
-        st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
-        st.rerun()
+    def _item_html(label, activo, nav_key):
+        bg     = "rgba(24,95,165,0.22)" if activo else "transparent"
+        color  = "#93c5fd"              if activo else "#94a3b8"
+        bLeft  = "3px solid #3b82f6"   if activo else "2px solid #2a4060"
+        fw     = "600"                  if activo else "400"
+        import urllib.parse
+        encoded = urllib.parse.quote(nav_key)
+        return f"""
+        <a href="?nav={encoded}" style="display:block;text-decoration:none;
+           background:{bg};color:{color};border:none;border-left:{bLeft};
+           border-radius:0 6px 6px 0;font-size:12px;font-weight:{fw};
+           padding:7px 10px 7px 20px;margin:1px 0 1px 10px;
+           transition:background .15s,color .15s">
+          {label}
+        </a>"""
 
-    # ── Ítems de REPORTES ─────────────────────────────────────────────────────
-    _rep_item_indices = []
-    _rep_activo_idx   = None
-    if st.session_state["nav_rep_abierto"]:
-        for i, opcion in enumerate(reportes_opts):
-            if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
-                st.session_state["nav_vista"] = opcion
-                st.rerun()
-            _rep_item_indices.append(i + 1)          # índice relativo en sidebar
-            if st.session_state["nav_vista"] == opcion:
-                _rep_activo_idx = i + 1
+    # Construir HTML del menú
+    rep_arrow = "▼" if rep_abierto else "▶"
+    op_arrow  = "▼" if op_abierto  else "▶"
 
-    # ── Separador ─────────────────────────────────────────────────────────────
-    _op_section_offset = 1 + (len(reportes_opts) if st.session_state["nav_rep_abierto"] else 0)
-
-    # ── Botón cabecera OPERACIONES ────────────────────────────────────────────
-    _op_item_indices = []
-    _op_activo_idx   = None
-    if operaciones_opts:
-        op_icon = "▼" if st.session_state["nav_op_abierto"] else "▶"
-        if st.button(f"{op_icon}  ⚙️  Operaciones", use_container_width=True, key="btn_sec_op"):
-            st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
-            st.rerun()
-
-        if st.session_state["nav_op_abierto"]:
-            for i, opcion in enumerate(operaciones_opts):
-                if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
-                    st.session_state["nav_vista"] = opcion
-                    st.rerun()
-                idx = _op_section_offset + 1 + i
-                _op_item_indices.append(idx)
-                if st.session_state["nav_vista"] == opcion:
-                    _op_activo_idx = idx
-
-    # ── JS: aplicar estilos REALES directamente sobre los botones del DOM ─────
-    # Calculamos qué índice (0-based) corresponde a cada botón dentro del sidebar
-    _js_section_indices = [0]   # índice 0 = btn_sec_rep
-    if operaciones_opts:
-        _js_section_indices.append(_op_section_offset)  # btn_sec_op
-
-    _js_active_idx   = _rep_activo_idx if _rep_activo_idx is not None else _op_activo_idx
-    _js_item_indices = _rep_item_indices + _op_item_indices
-
-    st.markdown(f"""
-    <script>
-    (function() {{
-      function styleNav() {{
-        var sidebar = document.querySelector('[data-testid="stSidebar"]');
-        if (!sidebar) return;
-        var marker = sidebar.querySelector('#wms-nav-start');
-        if (!marker) return;
-
-        // Recoge todos los botones del sidebar que vienen DESPUÉS del marcador
-        var allBtns = Array.from(sidebar.querySelectorAll('button'));
-        var markerRect = marker.getBoundingClientRect();
-        var navBtns = allBtns.filter(function(b) {{
-          return b.getBoundingClientRect().top >= markerRect.top - 5;
-        }});
-
-        var sectionIdxs = {_js_section_indices};
-        var itemIdxs    = {_js_item_indices};
-        var activeIdx   = {_js_active_idx if _js_active_idx is not None else 'null'};
-
-        navBtns.forEach(function(btn, i) {{
-          // Reset
-          btn.style.cssText = '';
-
-          if (sectionIdxs.indexOf(i) !== -1) {{
-            // Cabecera de sección
-            btn.style.background    = 'linear-gradient(135deg,#1a3352 0%,#142840 100%)';
-            btn.style.color         = '#e2e8f0';
-            btn.style.border        = '1px solid #2a4a6b';
-            btn.style.borderRadius  = '8px';
-            btn.style.fontSize      = '11px';
-            btn.style.fontWeight    = '700';
-            btn.style.textTransform = 'uppercase';
-            btn.style.letterSpacing = '.09em';
-            btn.style.padding       = '10px 14px';
-            btn.style.boxShadow     = '0 2px 6px rgba(0,0,0,.3)';
-            btn.style.marginBottom  = '2px';
-            btn.style.width         = '100%';
-          }} else if (itemIdxs.indexOf(i) !== -1) {{
-            // Ítem de submenú
-            var isActive = (i === activeIdx);
-            btn.style.background    = isActive ? 'rgba(24,95,165,0.18)' : 'transparent';
-            btn.style.color         = isActive ? '#93c5fd' : '#94a3b8';
-            btn.style.border        = 'none';
-            btn.style.borderLeft    = isActive ? '3px solid #3b82f6' : '2px solid #1e3a5f';
-            btn.style.borderRadius  = '0 6px 6px 0';
-            btn.style.fontSize      = '12px';
-            btn.style.fontWeight    = isActive ? '600' : '400';
-            btn.style.padding       = '6px 10px 6px 18px';
-            btn.style.marginLeft    = '8px';
-            btn.style.width         = 'calc(100% - 8px)';
-            btn.style.textAlign     = 'left';
-            btn.style.boxShadow     = 'none';
-            btn.style.letterSpacing = '0';
-            btn.style.textTransform = 'none';
-          }}
-        }});
+    menu_html = f"""
+    <style>
+      body {{ margin:0; padding:0; background:transparent; }}
+      .sec-btn {{
+        display:block; width:100%; text-decoration:none;
+        background:linear-gradient(135deg,#1a3352 0%,#0f2138 100%);
+        color:#cbd5e1 !important; border:1px solid #2a4a6b;
+        border-radius:8px; font-size:11px; font-weight:700;
+        text-transform:uppercase; letter-spacing:.1em;
+        padding:10px 14px; margin-bottom:4px; cursor:pointer;
+        box-sizing:border-box;
       }}
+      .sec-btn:hover {{ background:linear-gradient(135deg,#1e3d5c 0%,#142840 100%); }}
+      .menu-wrap {{ margin-bottom:6px; }}
+    </style>
+    <div class="menu-wrap">
+      <a class="sec-btn" href="?nav=__toggle_rep__">{rep_arrow}&nbsp; 📋&nbsp; Reportes</a>
+      {"".join(_item_html(o, o == vista_actual, o) for o in reportes_opts) if rep_abierto else ""}
+    </div>
+    """
 
-      // Ejecutar al cargar y observar cambios
-      styleNav();
-      var obs = new MutationObserver(styleNav);
-      obs.observe(document.body, {{ childList: true, subtree: true }});
-      setTimeout(styleNav, 300);
-      setTimeout(styleNav, 800);
-    }})();
-    </script>
-    """, unsafe_allow_html=True)
+    if operaciones_opts:
+        menu_html += f"""
+    <div class="menu-wrap">
+      <a class="sec-btn" href="?nav=__toggle_op__">{op_arrow}&nbsp; ⚙️&nbsp; Operaciones</a>
+      {"".join(_item_html(o, o == vista_actual, o) for o in operaciones_opts) if op_abierto else ""}
+    </div>
+    """
+
+    # Calcular altura dinámica del menú
+    n_items = (len(reportes_opts) if rep_abierto else 0) + \
+              (len(operaciones_opts) if (op_abierto and operaciones_opts) else 0)
+    n_secs  = 1 + (1 if operaciones_opts else 0)
+    altura  = n_secs * 48 + n_items * 32 + 20
+
+    components.html(menu_html, height=altura, scrolling=False)
 
     # ── Sistema ────────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:14px 4px 6px;"
-        "border-top:1px solid #1e3a5f;margin-top:12px'>Sistema</div>",
+        "text-transform:uppercase;letter-spacing:.12em;padding:10px 4px 6px;"
+        "border-top:1px solid #1e3a5f;margin-top:4px'>Sistema</div>",
         unsafe_allow_html=True
     )
 
@@ -740,8 +695,8 @@ with st.sidebar:
         st.rerun()
 
     st.markdown(
-        f"<div style='font-size:10px;color:#475569;padding:12px 4px 4px;"
-        f"border-top:1px solid #1e3a5f;margin-top:8px'>"
+        f"<div style='font-size:10px;color:#475569;padding:10px 4px 4px;"
+        f"border-top:1px solid #1e3a5f;margin-top:6px'>"
         f"⏱ Datos al {datetime.now().strftime('%H:%M:%S')}</div>",
         unsafe_allow_html=True
     )
@@ -749,7 +704,6 @@ with st.sidebar:
 # ── Vista activa ──────────────────────────────────────────────────────────────
 vista = st.session_state["nav_vista"]
 
-# Asegurar que la vista esté en las opciones permitidas del rol
 todas_las_vistas = reportes_opts + operaciones_opts
 if vista not in todas_las_vistas:
     vista = reportes_opts[0]
