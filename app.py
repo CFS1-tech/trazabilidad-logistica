@@ -554,7 +554,7 @@ ROL = st.session_state["rol"]
 
 VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN"]
 
 reportes_opts    = VISTAS_REPORTES_ADMIN if ROL == "administrador" else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
@@ -2280,7 +2280,7 @@ elif vista == "🛒  Despacho Operativo":
                                     fila.append(-abs(item["cantidad"]))
                                 elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
                                     fila.append(guia_str)
-                                elif h_up in ("CLIENTE", "CLIENT"):
+                                elif h_up in ("CLIENTE", "CLIENT", "TIENDA"):
                                     fila.append(cliente_str)
                                 elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
                                     fila.append(obs_str)
@@ -2317,3 +2317,292 @@ elif vista == "🛒  Despacho Operativo":
         st.session_state["desp_op_exito"] = False
         st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: CARGA PACKING LIST
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "📥  Carga Packing List":
+
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">📥</div>
+      <div>
+        <h1>Carga de Packing List</h1>
+        <p>Importa un Excel con el detalle del contenedor para registrarlo en el sistema</p>
+      </div>
+      <span class="wms-badge">Ingreso</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Cabeceras de la sheet PACKINGLIST ─────────────────────────────────────
+    COLS_INPUT = [
+        "SKU MASEF", "DESCRIPCIÓN", "Proveedor", "CTN",
+        "CASE QTY PL", "CASE PACK PL", "QTY PL",
+        "CASE QTY IN", "CASE PACK IN", "QTY IN",
+        "FECH ING", "OBS"
+    ]
+    COLS_SHEET = COLS_INPUT + ["DIF CAJAS", "DIF UNI", "ESTADO"]
+
+    # ── Descargable: plantilla con ejemplo ────────────────────────────────────
+    def generar_plantilla() -> bytes:
+        ejemplo = {
+            "SKU MASEF":    ["1030013"],
+            "DESCRIPCIÓN":  ["NUTELLA B READY 22 GR 0.7OZ"],
+            "Proveedor":    ["Importación"],
+            "CTN":          ["12341"],
+            "CASE QTY PL":  [50],
+            "CASE PACK PL": [36],
+            "QTY PL":       [1800],
+            "CASE QTY IN":  [49],
+            "CASE PACK IN": [36],
+            "QTY IN":       [1796],
+            "FECH ING":     ["24/3/2026"],
+            "OBS":          ["4un faltante post maquila"],
+        }
+        df_tmpl = pd.DataFrame(ejemplo)
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df_tmpl.to_excel(w, index=False, sheet_name="PackingList")
+        return buf.getvalue()
+
+    col_dl, col_sp = st.columns([1, 3])
+    with col_dl:
+        st.download_button(
+            "📄  Descargar plantilla",
+            generar_plantilla(),
+            "plantilla_packinglist.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
+
+    st.divider()
+
+    # ── Carga del archivo ─────────────────────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+        "📂 Selecciona el archivo Excel a cargar</div>",
+        unsafe_allow_html=True
+    )
+
+    archivo = st.file_uploader(
+        "", type=["xlsx", "xls"],
+        label_visibility="collapsed",
+        key="uploader_pl"
+    )
+
+    if archivo:
+        try:
+            df_up = pd.read_excel(archivo, dtype=str)
+            df_up.columns = df_up.columns.str.strip()
+        except Exception as e:
+            st.error(f"❌ Error leyendo el archivo: {e}")
+            st.stop()
+
+        # Verificar columnas mínimas requeridas
+        cols_faltantes = [c for c in COLS_INPUT if c not in df_up.columns]
+        if cols_faltantes:
+            st.error(f"❌ Faltan columnas en el archivo: {cols_faltantes}")
+            st.stop()
+
+        # Calcular diferencias y agregar columnas automáticas
+        df_up["CASE QTY PL"] = pd.to_numeric(df_up["CASE QTY PL"], errors="coerce").fillna(0)
+        df_up["CASE QTY IN"] = pd.to_numeric(df_up["CASE QTY IN"], errors="coerce").fillna(0)
+        df_up["QTY PL"]      = pd.to_numeric(df_up["QTY PL"],      errors="coerce").fillna(0)
+        df_up["QTY IN"]      = pd.to_numeric(df_up["QTY IN"],       errors="coerce").fillna(0)
+
+        df_up["DIF CAJAS"] = (df_up["CASE QTY IN"] - df_up["CASE QTY PL"]).astype(int)
+        df_up["DIF UNI"]   = (df_up["QTY IN"]      - df_up["QTY PL"]).astype(int)
+        df_up["ESTADO"]    = "EN REVISION"
+
+        # Preview
+        st.markdown(
+            f"<div style='font-size:12px;color:#64748b;margin-bottom:8px'>"
+            f"Vista previa — {len(df_up)} fila(s) detectadas</div>",
+            unsafe_allow_html=True
+        )
+        st.dataframe(df_up, use_container_width=True, hide_index=True)
+
+        # Métricas rápidas
+        m1, m2, m3, m4 = st.columns(4)
+        m1.metric("Filas",       f"{len(df_up):,}")
+        m2.metric("CTNs únicos", f"{df_up['CTN'].nunique():,}")
+        m3.metric("DIF CAJAS",   f"{int(df_up['DIF CAJAS'].sum()):+,}")
+        m4.metric("DIF UNI",     f"{int(df_up['DIF UNI'].sum()):+,}")
+
+        st.divider()
+
+        # ── Confirmar carga ───────────────────────────────────────────────────
+        if "pl_carga_ok" not in st.session_state:
+            st.session_state["pl_carga_ok"] = False
+
+        if st.button("✅  Confirmar e insertar en sistema", use_container_width=True, type="primary"):
+            try:
+                client_pl = get_client()
+                sh_pl     = client_pl.open_by_key(st.secrets["spreadsheet_id"])
+                ws_pl     = sh_pl.worksheet("PACKINGLIST")
+                headers_pl = ws_pl.row_values(1)
+
+                # Construir filas respetando el orden de columnas de la sheet
+                filas_pl = []
+                for _, row in df_up.iterrows():
+                    fila = []
+                    for h in headers_pl:
+                        h_strip = h.strip()
+                        if h_strip in df_up.columns:
+                            val = row[h_strip]
+                            fila.append("" if pd.isna(val) else str(val) if not isinstance(val, (int, float)) else val)
+                        else:
+                            fila.append("")
+                    filas_pl.append(fila)
+
+                ws_pl.append_rows(filas_pl, value_input_option="USER_ENTERED")
+                st.cache_data.clear()
+                st.session_state["pl_carga_ok"] = True
+                st.rerun()
+
+            except Exception as e:
+                st.error(f"❌ Error al insertar en Google Sheets: {e}")
+
+        if st.session_state.get("pl_carga_ok"):
+            st.session_state["pl_carga_ok"] = False
+            st.success("✅ Packing List cargado correctamente. Los datos ya están en el sistema.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: CAMBIO DE ESTADO CTN
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "🔄  Cambio de Estado CTN":
+
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">🔄</div>
+      <div>
+        <h1>Cambio de Estado — CTN</h1>
+        <p>Selecciona un contenedor y actualiza su estado en el Packing List</p>
+      </div>
+      <span class="wms-badge">Gestión</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Cargar datos actuales del packinglist ─────────────────────────────────
+    try:
+        client_est = get_client()
+        sh_est     = client_est.open_by_key(st.secrets["spreadsheet_id"])
+        ws_est     = sh_est.worksheet("PACKINGLIST")
+        data_est   = ws_est.get_all_records()
+        headers_est = ws_est.row_values(1)
+        df_est     = pd.DataFrame(data_est)
+    except Exception as e:
+        st.error(f"❌ Error conectando a Google Sheets: {e}")
+        st.stop()
+
+    if df_est.empty:
+        st.info("El Packing List está vacío.")
+        st.stop()
+
+    # Detectar columnas clave
+    col_ctn_est    = next((c for c in df_est.columns if "CTN" in c.upper()), None)
+    col_estado_est = next((c for c in df_est.columns if "ESTADO" in c.upper()), None)
+    col_sku_est    = next((c for c in df_est.columns if "SKU" in c.upper()), None)
+
+    if not col_ctn_est or not col_estado_est:
+        st.error("❌ No se encontraron las columnas CTN o ESTADO en el Packing List.")
+        st.stop()
+
+    # ── Filtrar solo CTNs que NO están completamente REVISADOS ──────────────────
+    ctns_todos = df_est[col_ctn_est].astype(str).unique().tolist()
+    ctns_pendientes = []
+    for ctn in ctns_todos:
+        estados_ctn = df_est[df_est[col_ctn_est].astype(str) == ctn][col_estado_est].astype(str).unique().tolist()
+        if not all(e.strip().upper() == "REVISADO" for e in estados_ctn):
+            ctns_pendientes.append(ctn)
+    ctns_pendientes = sorted(ctns_pendientes)
+
+    if not ctns_pendientes:
+        st.success("✅ Todos los contenedores están en estado REVISADO.")
+        st.stop()
+
+    # ── Selector de CTN ───────────────────────────────────────────────────────
+    with st.form("form_estado_ctn"):
+        fc1, fc2 = st.columns(2)
+
+        with fc1:
+            f_ctn_sel = st.selectbox(
+                "📦 Seleccionar CTN (solo pendientes de revisión)",
+                ctns_pendientes
+            )
+        with fc2:
+            f_estado_filtro = st.selectbox(
+                "🏷️ Filtrar por estado actual",
+                ["Todos"] + sorted(df_est[col_estado_est].dropna().astype(str).unique().tolist())
+            )
+
+        st.form_submit_button("🔍 Ver detalle del CTN", use_container_width=True)
+
+    # ── Detalle del CTN seleccionado ──────────────────────────────────────────
+    df_ctn = df_est[df_est[col_ctn_est].astype(str) == f_ctn_sel].copy()
+    if f_estado_filtro != "Todos":
+        df_ctn = df_ctn[df_ctn[col_estado_est].astype(str) == f_estado_filtro]
+
+    estado_actual_ctn = df_est[
+        df_est[col_ctn_est].astype(str) == f_ctn_sel
+    ][col_estado_est].iloc[0] if len(df_ctn) else "—"
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("📦 CTN",           f_ctn_sel)
+    m2.metric("🏷️ Estado actual", str(estado_actual_ctn))
+    m3.metric("📋 Filas en CTN",  f"{len(df_ctn):,}")
+
+    st.divider()
+
+    if len(df_ctn) == 0:
+        st.info("No hay registros para este CTN con el filtro seleccionado.")
+    else:
+        st.dataframe(df_ctn, use_container_width=True, hide_index=True)
+
+        st.divider()
+
+        st.markdown(
+            f"<div style='background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;"
+            f"padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:12px'>"
+            f"Se marcará el CTN <b>{f_ctn_sel}</b> como <b>REVISADO</b> en todas sus filas "
+            f"({len(df_est[df_est[col_ctn_est].astype(str) == f_ctn_sel])} registros)."
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        if "estado_ctn_ok" not in st.session_state:
+            st.session_state["estado_ctn_ok"] = False
+
+        col_ok, col_sp2 = st.columns([1, 2])
+        with col_ok:
+            if st.button("✅  Marcar como REVISADO y guardar", use_container_width=True, type="primary"):
+                try:
+                    col_idx_est = headers_est.index(col_estado_est) + 1
+                    col_ctn_idx = headers_est.index(col_ctn_est)
+                    todas_filas = ws_est.get_all_values()
+
+                    batch = []
+                    for i, fila in enumerate(todas_filas[1:], start=2):
+                        if len(fila) > col_ctn_idx and str(fila[col_ctn_idx]).strip() == str(f_ctn_sel):
+                            from gspread.utils import rowcol_to_a1
+                            celda = rowcol_to_a1(i, col_idx_est)
+                            batch.append({"range": celda, "values": [["REVISADO"]]})
+
+                    if batch:
+                        ws_est.batch_update(batch, value_input_option="USER_ENTERED")
+                        st.cache_data.clear()
+                        st.session_state["estado_ctn_ok"] = True
+                        st.rerun()
+                    else:
+                        st.warning("No se encontraron celdas para actualizar.")
+
+                except Exception as e:
+                    st.error(f"❌ Error al actualizar: {e}")
+
+        if st.session_state.get("estado_ctn_ok"):
+            st.session_state["estado_ctn_ok"] = False
+            st.success(f"✅ CTN {f_ctn_sel} marcado como REVISADO correctamente.")
