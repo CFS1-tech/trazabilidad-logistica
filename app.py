@@ -599,52 +599,67 @@ with st.sidebar:
     # ── CSS extra para los botones de menú ────────────────────────────────────
     st.markdown("""
     <style>
-    /* Cabecera de sección acordeón */
+    /* ── Cabecera de sección (Reportes / Operaciones) ── */
     div[data-testid="stSidebar"] .nav-section-btn > button {
-        background: rgba(255,255,255,0.06) !important;
-        color: #cbd5e1 !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
+        background: linear-gradient(135deg, #1e3a5f 0%, #1a2f4a 100%) !important;
+        color: #e2e8f0 !important;
+        border: 1px solid #2d5278 !important;
         border-radius: 8px !important;
         font-size: 12px !important;
         font-weight: 700 !important;
         text-transform: uppercase !important;
-        letter-spacing: .08em !important;
+        letter-spacing: .1em !important;
         padding: 10px 14px !important;
-        margin-bottom: 4px !important;
-        text-align: left !important;
-        box-shadow: none !important;
+        margin-bottom: 2px !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important;
         transform: none !important;
     }
     div[data-testid="stSidebar"] .nav-section-btn > button:hover {
-        background: rgba(255,255,255,0.1) !important;
-        box-shadow: none !important;
+        background: linear-gradient(135deg, #24456e 0%, #1e3a5f 100%) !important;
+        box-shadow: 0 3px 8px rgba(0,0,0,0.3) !important;
         transform: none !important;
     }
-    /* Ítem de menú dentro del acordeón */
+
+    /* ── Ítem normal del submenú ── */
     div[data-testid="stSidebar"] .nav-item-btn > button {
         background: transparent !important;
         color: #94a3b8 !important;
         border: none !important;
-        border-radius: 6px !important;
-        font-size: 13px !important;
-        font-weight: 500 !important;
-        padding: 7px 12px 7px 24px !important;
+        border-left: 2px solid #1e3a5f !important;
+        border-radius: 0 6px 6px 0 !important;
+        font-size: 12px !important;
+        font-weight: 400 !important;
+        padding: 6px 10px 6px 20px !important;
+        margin-left: 8px !important;
         text-align: left !important;
         box-shadow: none !important;
         transform: none !important;
+        letter-spacing: 0 !important;
+        text-transform: none !important;
     }
     div[data-testid="stSidebar"] .nav-item-btn > button:hover {
-        background: rgba(255,255,255,0.07) !important;
-        color: #e2e8f0 !important;
+        background: rgba(255,255,255,0.05) !important;
+        color: #cbd5e1 !important;
+        border-left: 2px solid #3b82f6 !important;
         box-shadow: none !important;
         transform: none !important;
     }
-    /* Ítem activo */
+
+    /* ── Ítem activo del submenú ── */
     div[data-testid="stSidebar"] .nav-item-active > button {
-        background: rgba(24,95,165,0.35) !important;
+        background: rgba(24,95,165,0.2) !important;
         color: #93c5fd !important;
+        border: none !important;
         border-left: 3px solid #3b82f6 !important;
+        border-radius: 0 6px 6px 0 !important;
+        font-size: 12px !important;
         font-weight: 600 !important;
+        padding: 6px 10px 6px 20px !important;
+        margin-left: 8px !important;
+        box-shadow: none !important;
+        transform: none !important;
+        letter-spacing: 0 !important;
+        text-transform: none !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -658,6 +673,10 @@ with st.sidebar:
     st.markdown('</div>', unsafe_allow_html=True)
 
     if st.session_state["nav_rep_abierto"]:
+        st.markdown(
+            "<div style='border-left:2px solid #1e3a5f;margin:2px 0 6px 10px;padding:2px 0'>",
+            unsafe_allow_html=True
+        )
         for opcion in reportes_opts:
             es_activo = st.session_state["nav_vista"] == opcion
             clase = "nav-item-active" if es_activo else "nav-item-btn"
@@ -666,6 +685,7 @@ with st.sidebar:
                 st.session_state["nav_vista"] = opcion
                 st.rerun()
             st.markdown('</div>', unsafe_allow_html=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Sección OPERACIONES ────────────────────────────────────────────────────
     if operaciones_opts:
@@ -678,6 +698,10 @@ with st.sidebar:
         st.markdown('</div>', unsafe_allow_html=True)
 
         if st.session_state["nav_op_abierto"]:
+            st.markdown(
+                "<div style='border-left:2px solid #1e3a5f;margin:2px 0 6px 10px;padding:2px 0'>",
+                unsafe_allow_html=True
+            )
             for opcion in operaciones_opts:
                 es_activo = st.session_state["nav_vista"] == opcion
                 clase = "nav-item-active" if es_activo else "nav-item-btn"
@@ -686,6 +710,7 @@ with st.sidebar:
                     st.session_state["nav_vista"] = opcion
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
     # ── Sistema ────────────────────────────────────────────────────────────────
     st.markdown(
