@@ -2317,3 +2317,4 @@ elif vista == "🛒  Despacho Operativo":
     if st.session_state.get("desp_op_exito") and st.session_state["desp_op_paso"] == 1:
         st.session_state["desp_op_exito"] = False
         st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
+
