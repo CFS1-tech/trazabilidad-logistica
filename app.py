@@ -481,9 +481,9 @@ def botones_descarga(df_display, nombre):
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 USUARIOS = {
-    "admin":      {"password": "admin123",   "rol": "administrador"},
+    "admin":      {"password": "Duquesa24",   "rol": "administrador"},
     "Masef_CFS":  {"password": "Masef2026",  "rol": "cliente"},
-    "operario":   {"password": "Op2026",     "rol": "operario"},
+    "CargoflexSupply":   {"password": "CFS2026",     "rol": "operador"},
 }
 
 if "autenticado" not in st.session_state:
