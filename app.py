@@ -551,14 +551,16 @@ if not st.session_state["autenticado"]:
 
 ROL = st.session_state["rol"]
 
-VISTAS_ADMIN  = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🛒  Despacho Operativo"]
-VISTAS_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
+VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
+VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo"]
 
-opciones_vista = VISTAS_ADMIN if ROL == "administrador" else VISTAS_CLIENTE
+reportes_opts    = VISTAS_REPORTES_ADMIN if ROL == "administrador" else VISTAS_REPORTES_CLIENTE
+operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
 
 with st.sidebar:
 
-    # Logo / Título
+    # ── Logo / Título ──────────────────────────────────────────────────────────
     st.markdown("""
     <div style="padding:20px 4px 8px;text-align:center">
       <div style="font-size:36px">📦</div>
@@ -568,7 +570,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-    # Usuario
+    # ── Usuario ────────────────────────────────────────────────────────────────
     rol_color = "#3b82f6" if ROL == "administrador" else "#10b981"
     st.markdown(
         f"""<div style="background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.08);
@@ -586,18 +588,49 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
+    # ── Sección: Reportes ──────────────────────────────────────────────────────
     st.markdown(
         "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>Módulos</div>",
+        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>"
+        "📋  Reportes</div>",
         unsafe_allow_html=True
     )
 
-    vista = st.radio("", opciones_vista, label_visibility="collapsed")
+    vista_reporte = st.radio(
+        "reportes",
+        reportes_opts,
+        label_visibility="collapsed",
+        key="nav_reportes"
+    )
 
+    # ── Sección: Operaciones (solo admin / operario) ───────────────────────────
+    vista_operacion = None
+    if operaciones_opts:
+        st.markdown(
+            "<div style='font-size:9px;font-weight:700;color:#475569;"
+            "text-transform:uppercase;letter-spacing:.12em;padding:12px 4px 6px;"
+            "border-top:1px solid #1e3a5f;margin-top:8px'>"
+            "⚙️  Operaciones</div>",
+            unsafe_allow_html=True
+        )
+        vista_operacion = st.radio(
+            "operaciones",
+            operaciones_opts,
+            label_visibility="collapsed",
+            key="nav_operaciones"
+        )
+
+    # ── Determinar vista activa ────────────────────────────────────────────────
+    # El último radio tocado toma precedencia; usamos session_state para rastrearlo
+    if "nav_seccion_activa" not in st.session_state:
+        st.session_state["nav_seccion_activa"] = "reportes"
+
+    # ── Sección: Sistema ───────────────────────────────────────────────────────
     st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
     st.markdown(
         "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>Sistema</div>",
+        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px;"
+        "border-top:1px solid #1e3a5f'>Sistema</div>",
         unsafe_allow_html=True
     )
 
@@ -615,6 +648,24 @@ with st.sidebar:
         f"⏱ Datos al {datetime.now().strftime('%H:%M:%S')}</div>",
         unsafe_allow_html=True
     )
+
+# ── Resolver vista activa ─────────────────────────────────────────────────────
+# Detectar cuál sección fue tocada comparando con el valor previo guardado
+_prev_reporte    = st.session_state.get("_prev_reporte",    vista_reporte)
+_prev_operacion  = st.session_state.get("_prev_operacion",  vista_operacion)
+
+if vista_reporte != _prev_reporte:
+    st.session_state["nav_seccion_activa"] = "reportes"
+elif vista_operacion and vista_operacion != _prev_operacion:
+    st.session_state["nav_seccion_activa"] = "operaciones"
+
+st.session_state["_prev_reporte"]   = vista_reporte
+st.session_state["_prev_operacion"] = vista_operacion
+
+if st.session_state["nav_seccion_activa"] == "operaciones" and vista_operacion:
+    vista = vista_operacion
+else:
+    vista = vista_reporte
 
 # ── Carga de datos ────────────────────────────────────────────────────────────
 
@@ -1856,9 +1907,27 @@ elif vista == "🛒  Despacho Operativo":
     """, unsafe_allow_html=True)
 
     # ── Inicializar session state ──────────────────────────────────────────────
-    if "desp_op_items"   not in st.session_state: st.session_state["desp_op_items"]   = []
-    if "desp_op_buscar"  not in st.session_state: st.session_state["desp_op_buscar"]  = ""
-    if "desp_op_exito"   not in st.session_state: st.session_state["desp_op_exito"]   = False
+    for _k, _v in [
+        ("desp_op_paso",    1),        # 1 = cabecera, 2 = búsqueda/carrito
+        ("desp_op_fecha",   date.today()),
+        ("desp_op_guia",    ""),
+        ("desp_op_cliente", ""),
+        ("desp_op_obs",     ""),
+        ("desp_op_items",   []),
+        ("desp_op_exito",   False),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    # ── Función reset total ────────────────────────────────────────────────────
+    def reset_desp_op():
+        st.session_state["desp_op_paso"]    = 1
+        st.session_state["desp_op_fecha"]   = date.today()
+        st.session_state["desp_op_guia"]    = ""
+        st.session_state["desp_op_cliente"] = ""
+        st.session_state["desp_op_obs"]     = ""
+        st.session_state["desp_op_items"]   = []
+        st.session_state["desp_op_exito"]   = False
 
     # ── Función insertar en Sheets ─────────────────────────────────────────────
     def insertar_salidas(filas: list) -> bool:
@@ -1872,84 +1941,133 @@ elif vista == "🛒  Despacho Operativo":
             st.error(f"❌ Error al guardar en Google Sheets: {e}")
             return False
 
-    # ── Calcular stock actual (sin merma) ──────────────────────────────────────
-    stock_op = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
+    # ══════════════════════════════════════════════════════════════════════════
+    # PASO 1 — Datos del pedido
+    # ══════════════════════════════════════════════════════════════════════════
+    if st.session_state["desp_op_paso"] == 1:
 
-    # Merge proveedor para mostrar info
-    pk_op = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
-    stock_op["CTN"]       = stock_op["CTN"].astype(str).str.strip()
-    stock_op["SKU MASEF"] = stock_op["SKU MASEF"].astype(str).str.strip()
-    stock_op = stock_op.merge(pk_op, on=["CTN", "SKU MASEF"], how="left")
+        st.markdown("""
+        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
+          <b>Paso 1 de 2</b> — Completa los datos del despacho y luego continúa para agregar productos.
+        </div>
+        """, unsafe_allow_html=True)
 
-    # ── Cabecera del despacho ──────────────────────────────────────────────────
-    st.markdown(
-        "<div style='font-size:11px;font-weight:700;color:#64748b;"
-        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-        "📋 Datos del despacho</div>",
-        unsafe_allow_html=True
-    )
-
-    with st.container():
-        st.markdown('<div style="background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.06);margin-bottom:14px">', unsafe_allow_html=True)
-        hc1, hc2, hc3 = st.columns(3)
-        with hc1:
-            fecha_desp_op = st.date_input("📅 Fecha de salida", value=date.today(), key="fdo")
-        with hc2:
-            guia_desp_op  = st.text_input("📄 N° de Guía / Referencia", placeholder="Ej: GR-2026-001", key="gdo")
-        with hc3:
-            obs_desp_op   = st.text_input("💬 Observación (opcional)", placeholder="Ej: Pedido cliente X", key="odo")
-        st.markdown('</div>', unsafe_allow_html=True)
-
-    st.divider()
-
-    # ── Buscador de productos ──────────────────────────────────────────────────
-    st.markdown(
-        "<div style='font-size:11px;font-weight:700;color:#64748b;"
-        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-        "🔎 Buscar producto</div>",
-        unsafe_allow_html=True
-    )
-
-    buscar_op = st.text_input(
-        "",
-        placeholder="Escribe el código SKU o la descripción del producto…",
-        key="buscar_op",
-        label_visibility="collapsed"
-    )
-
-    # ── Resultados de búsqueda ─────────────────────────────────────────────────
-    if buscar_op.strip():
-        mask_op = (
-            stock_op["SKU MASEF"].str.contains(buscar_op, case=False, na=False)
-            | stock_op["DESCRIPTION"].str.contains(buscar_op, case=False, na=False)
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+            "📋 Datos del despacho</div>",
+            unsafe_allow_html=True
         )
-        resultados = stock_op[mask_op].copy()
 
-        if resultados.empty:
-            st.info("Sin resultados para esa búsqueda.")
-        else:
-            st.markdown(
-                f"<div style='font-size:12px;color:#64748b;margin-bottom:10px'>"
-                f"{len(resultados)} resultado(s) encontrado(s)</div>",
-                unsafe_allow_html=True
+        with st.form("form_desp_cabecera"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_fecha   = st.date_input("📅 Fecha de salida",        value=st.session_state["desp_op_fecha"])
+                inp_cliente = st.text_input("👤 Cliente",                 value=st.session_state["desp_op_cliente"], placeholder="Nombre del cliente")
+            with c2:
+                inp_guia    = st.text_input("📄 N° de Guía / Referencia", value=st.session_state["desp_op_guia"],    placeholder="Ej: GR-2026-001")
+                inp_obs     = st.text_input("💬 Observación (opcional)",  value=st.session_state["desp_op_obs"],     placeholder="Ej: Pedido urgente")
+
+            continuar = st.form_submit_button("➡️  Continuar — Agregar productos", use_container_width=True)
+
+        if continuar:
+            if not inp_guia.strip():
+                st.warning("⚠️ Debes ingresar un N° de Guía / Referencia.")
+            elif not inp_cliente.strip():
+                st.warning("⚠️ Debes ingresar el nombre del cliente.")
+            else:
+                st.session_state["desp_op_fecha"]   = inp_fecha
+                st.session_state["desp_op_guia"]    = inp_guia.strip()
+                st.session_state["desp_op_cliente"] = inp_cliente.strip()
+                st.session_state["desp_op_obs"]     = inp_obs.strip()
+                st.session_state["desp_op_paso"]    = 2
+                st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PASO 2 — Búsqueda de productos + carrito
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+
+        # ── Banner resumen del pedido (fijo, siempre visible) ─────────────────
+        items_count = len(st.session_state["desp_op_items"])
+        total_u     = sum(i["cantidad"] for i in st.session_state["desp_op_items"])
+        st.markdown(f"""
+        <div style="background:#0d1b2a;border-radius:10px;padding:14px 20px;
+                    margin-bottom:16px;display:flex;gap:24px;align-items:center;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.15)">
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Guía</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_guia']}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Cliente</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_cliente']}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Fecha</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_fecha'].strftime('%d/%m/%Y')}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right">
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Productos / Unidades</div>
+            <div style="font-size:16px;font-weight:700;color:#60a5fa">{items_count} ítems &nbsp;·&nbsp; {total_u:,} u.</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Calcular stock actual ─────────────────────────────────────────────
+        stock_op = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
+        pk_op    = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+        stock_op["CTN"]       = stock_op["CTN"].astype(str).str.strip()
+        stock_op["SKU MASEF"] = stock_op["SKU MASEF"].astype(str).str.strip()
+        stock_op = stock_op.merge(pk_op, on=["CTN", "SKU MASEF"], how="left")
+
+        # ── Buscador ──────────────────────────────────────────────────────────
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+            "🔎 Buscar y agregar productos</div>",
+            unsafe_allow_html=True
+        )
+
+        buscar_op = st.text_input(
+            "",
+            placeholder="Escribe el código SKU o la descripción del producto…",
+            key="buscar_op",
+            label_visibility="collapsed"
+        )
+
+        # ── Resultados ────────────────────────────────────────────────────────
+        if buscar_op.strip():
+            mask_op = (
+                stock_op["SKU MASEF"].str.contains(buscar_op, case=False, na=False)
+                | stock_op["DESCRIPTION"].str.contains(buscar_op, case=False, na=False)
             )
+            resultados = stock_op[mask_op].copy()
 
-            for _, row in resultados.iterrows():
-                sku       = str(row["SKU MASEF"])
-                desc      = str(row.get("DESCRIPTION", ""))
-                ctn       = str(row["CTN"])
-                estado    = str(row["ESTADO"])
-                stock_disp= int(row["Stock"])
-                vcto      = str(row.get("FECHA VCTO", "")) or "—"
-                prov      = str(row.get(col_proveedor_pk, "")) if col_proveedor_pk else ""
-                item_key  = f"{sku}||{ctn}||{estado}||{vcto}"
-
-                # ¿Ya está en el carrito?
-                ya_en_carrito = any(
-                    it["key"] == item_key for it in st.session_state["desp_op_items"]
+            if resultados.empty:
+                st.info("Sin resultados para esa búsqueda.")
+            else:
+                st.markdown(
+                    f"<div style='font-size:12px;color:#64748b;margin-bottom:10px'>"
+                    f"{len(resultados)} resultado(s)</div>",
+                    unsafe_allow_html=True
                 )
 
-                with st.container():
+                for _, row in resultados.iterrows():
+                    sku        = str(row["SKU MASEF"])
+                    desc       = str(row.get("DESCRIPTION", ""))
+                    ctn        = str(row["CTN"])
+                    estado     = str(row["ESTADO"])
+                    stock_disp = int(row["Stock"])
+                    vcto       = str(row.get("FECHA VCTO", "")) or "—"
+                    prov       = str(row.get(col_proveedor_pk, "")) if col_proveedor_pk else ""
+                    item_key   = f"{sku}||{ctn}||{estado}||{vcto}"
+
+                    ya_en_carrito = any(
+                        it["key"] == item_key for it in st.session_state["desp_op_items"]
+                    )
+
                     st.markdown(f"""
                     <div class="desp-card">
                       <div class="desp-sku">{sku}</div>
@@ -1958,7 +2076,7 @@ elif vista == "🛒  Despacho Operativo":
                         📦 CTN: <b>{ctn}</b> &nbsp;|&nbsp;
                         🏷️ Estado: <b>{estado}</b> &nbsp;|&nbsp;
                         📅 Vcto: <b>{vcto}</b>
-                        {"&nbsp;|&nbsp; 🏭 " + prov if prov and prov != "nan" else ""}
+                        {"&nbsp;|&nbsp; 🏭 " + prov if prov and prov not in ("nan","") else ""}
                       </div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1966,18 +2084,15 @@ elif vista == "🛒  Despacho Operativo":
                     rc1, rc2, rc3 = st.columns([3, 1, 1])
                     with rc1:
                         st.markdown(
-                            f"<div class='desp-stock' style='margin-top:6px'>✅ Stock disponible: {stock_disp:,} unidades</div>",
+                            f"<div class='desp-stock' style='margin-top:6px'>"
+                            f"✅ Stock disponible: <b>{stock_disp:,}</b> unidades</div>",
                             unsafe_allow_html=True
                         )
                     with rc2:
-                        cant_key = f"cant_{item_key}"
                         cantidad = st.number_input(
-                            "Cantidad",
-                            min_value=1,
-                            max_value=stock_disp,
-                            value=1,
-                            step=1,
-                            key=cant_key,
+                            "Cantidad", min_value=1, max_value=stock_disp,
+                            value=1, step=1,
+                            key=f"cant_{item_key}",
                             label_visibility="collapsed"
                         )
                     with rc3:
@@ -1985,7 +2100,6 @@ elif vista == "🛒  Despacho Operativo":
                             st.button("✅ Agregado", key=f"btn_{item_key}", disabled=True, use_container_width=True)
                         else:
                             if st.button("➕ Agregar", key=f"btn_{item_key}", use_container_width=True):
-                                # Traer datos completos del row para insertar luego
                                 st.session_state["desp_op_items"].append({
                                     "key":         item_key,
                                     "SKU MASEF":   sku,
@@ -1997,73 +2111,61 @@ elif vista == "🛒  Despacho Operativo":
                                 })
                                 st.rerun()
 
-    # ── Carrito / resumen de salida ────────────────────────────────────────────
-    if st.session_state["desp_op_items"]:
-        st.divider()
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#64748b;"
-            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
-            f"🛒 Resumen de salida — {len(st.session_state['desp_op_items'])} ítem(s)</div>",
-            unsafe_allow_html=True
-        )
+        # ── Carrito ───────────────────────────────────────────────────────────
+        if st.session_state["desp_op_items"]:
+            st.divider()
+            st.markdown(
+                f"<div style='font-size:11px;font-weight:700;color:#64748b;"
+                f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+                f"🛒 Carrito — {len(st.session_state['desp_op_items'])} ítem(s)</div>",
+                unsafe_allow_html=True
+            )
 
-        total_units = 0
-        to_remove   = None
+            total_units = 0
+            to_remove   = None
 
-        for idx, item in enumerate(st.session_state["desp_op_items"]):
-            ci1, ci2, ci3, ci4 = st.columns([3, 1, 1, 1])
-            with ci1:
-                st.markdown(
-                    f"<div style='font-size:13px;font-weight:600;color:#0f172a'>{item['DESCRIPTION']}</div>"
-                    f"<div style='font-size:11px;color:#64748b'>{item['SKU MASEF']} — CTN {item['CTN']} — {item['ESTADO']}</div>",
-                    unsafe_allow_html=True
-                )
-            with ci2:
-                # Editar cantidad en el carrito
-                nueva_cant = st.number_input(
-                    "Cant.",
-                    min_value=1,
-                    value=item["cantidad"],
-                    step=1,
-                    key=f"edit_cant_{idx}",
-                    label_visibility="collapsed"
-                )
-                st.session_state["desp_op_items"][idx]["cantidad"] = nueva_cant
-            with ci3:
-                st.markdown(
-                    f"<div style='font-size:13px;font-weight:700;color:#185FA5;margin-top:6px'>"
-                    f"−{nueva_cant:,} u.</div>",
-                    unsafe_allow_html=True
-                )
-            with ci4:
-                if st.button("🗑️", key=f"rm_{idx}", help="Quitar", use_container_width=True):
-                    to_remove = idx
-            total_units += nueva_cant
+            for idx, item in enumerate(st.session_state["desp_op_items"]):
+                ci1, ci2, ci3, ci4 = st.columns([4, 1, 1, 1])
+                with ci1:
+                    st.markdown(
+                        f"<div style='font-size:13px;font-weight:600;color:#0f172a'>{item['DESCRIPTION']}</div>"
+                        f"<div style='font-size:11px;color:#64748b'>"
+                        f"{item['SKU MASEF']} — CTN {item['CTN']} — {item['ESTADO']}</div>",
+                        unsafe_allow_html=True
+                    )
+                with ci2:
+                    nueva_cant = st.number_input(
+                        "Cant.", min_value=1, value=item["cantidad"], step=1,
+                        key=f"edit_cant_{idx}", label_visibility="collapsed"
+                    )
+                    st.session_state["desp_op_items"][idx]["cantidad"] = nueva_cant
+                with ci3:
+                    st.markdown(
+                        f"<div style='font-size:13px;font-weight:700;color:#185FA5;margin-top:6px'>"
+                        f"−{nueva_cant:,} u.</div>",
+                        unsafe_allow_html=True
+                    )
+                with ci4:
+                    if st.button("🗑️", key=f"rm_{idx}", help="Quitar", use_container_width=True):
+                        to_remove = idx
+                total_units += nueva_cant
 
-        if to_remove is not None:
-            st.session_state["desp_op_items"].pop(to_remove)
-            st.rerun()
+            if to_remove is not None:
+                st.session_state["desp_op_items"].pop(to_remove)
+                st.rerun()
 
-        st.markdown(
-            f"<div style='text-align:right;font-size:14px;font-weight:700;color:#0f172a;"
-            f"margin:8px 0 4px'>Total a despachar: {total_units:,} unidades</div>",
-            unsafe_allow_html=True
-        )
+            st.markdown(
+                f"<div style='text-align:right;font-size:15px;font-weight:700;color:#0f172a;"
+                f"background:#f8fafc;border-radius:8px;padding:10px 16px;margin:8px 0'>"
+                f"Total a despachar: {total_units:,} unidades</div>",
+                unsafe_allow_html=True
+            )
 
-        # ── Validaciones ──
-        errores = []
-        if not guia_desp_op.strip():
-            errores.append("Debes ingresar un N° de Guía / Referencia.")
+            # ── Botones acción ────────────────────────────────────────────────
+            col_conf, col_volver, col_can = st.columns([3, 1, 1])
 
-        if errores:
-            for e in errores:
-                st.warning(f"⚠️ {e}")
-        else:
-            col_conf, col_can = st.columns([2, 1])
             with col_conf:
                 if st.button("✅  Confirmar y registrar salida", use_container_width=True, type="primary"):
-
-                    # Obtener columnas reales de la hoja
                     try:
                         client_tmp = get_client()
                         sh_tmp     = client_tmp.open_by_key(st.secrets["spreadsheet_id"])
@@ -2074,7 +2176,10 @@ elif vista == "🛒  Despacho Operativo":
                         headers = []
 
                     if headers:
-                        fecha_str = fecha_desp_op.strftime("%d/%m/%Y")
+                        fecha_str        = st.session_state["desp_op_fecha"].strftime("%d/%m/%Y")
+                        guia_str         = st.session_state["desp_op_guia"]
+                        cliente_str      = st.session_state["desp_op_cliente"]
+                        obs_str          = st.session_state["desp_op_obs"]
                         filas_a_insertar = []
 
                         for item in st.session_state["desp_op_items"]:
@@ -2083,7 +2188,7 @@ elif vista == "🛒  Despacho Operativo":
                                 h_up = h.upper().strip()
                                 if h_up == "FECHA":
                                     fila.append(fecha_str)
-                                elif h_up in ("CTN",):
+                                elif h_up == "CTN":
                                     fila.append(item["CTN"])
                                 elif h_up in ("SKU MASEF", "SKU"):
                                     fila.append(item["SKU MASEF"])
@@ -2098,26 +2203,41 @@ elif vista == "🛒  Despacho Operativo":
                                 elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
                                     fila.append(-abs(item["cantidad"]))
                                 elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
-                                    fila.append(guia_desp_op.strip())
+                                    fila.append(guia_str)
+                                elif h_up in ("CLIENTE", "CLIENT"):
+                                    fila.append(cliente_str)
                                 elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
-                                    fila.append(obs_desp_op.strip())
+                                    fila.append(obs_str)
                                 else:
                                     fila.append("")
                             filas_a_insertar.append(fila)
 
                         ok = insertar_salidas(filas_a_insertar)
                         if ok:
-                            st.session_state["desp_op_items"] = []
-                            st.session_state["desp_op_exito"] = True
                             st.cache_data.clear()
+                            reset_desp_op()
+                            st.session_state["desp_op_exito"] = True
                             st.rerun()
 
-            with col_can:
-                if st.button("🗑️  Limpiar todo", use_container_width=True):
-                    st.session_state["desp_op_items"] = []
+            with col_volver:
+                if st.button("✏️  Editar cabecera", use_container_width=True):
+                    st.session_state["desp_op_paso"] = 1
                     st.rerun()
 
-    # ── Mensaje de éxito ──────────────────────────────────────────────────────
-    if st.session_state.get("desp_op_exito"):
+            with col_can:
+                if st.button("🗑️  Cancelar todo", use_container_width=True):
+                    reset_desp_op()
+                    st.rerun()
+
+        else:
+            # Sin ítems en carrito — opción de volver
+            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+            if st.button("← Volver a datos del despacho", use_container_width=False):
+                st.session_state["desp_op_paso"] = 1
+                st.rerun()
+
+    # ── Mensaje de éxito (se muestra en Paso 1, tras el reset) ────────────────
+    if st.session_state.get("desp_op_exito") and st.session_state["desp_op_paso"] == 1:
         st.session_state["desp_op_exito"] = False
-        st.success("✅ Salida registrada correctamente en el sistema. El stock se ha actualizado.")
+        st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
+
