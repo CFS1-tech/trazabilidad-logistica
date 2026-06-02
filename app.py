@@ -558,9 +558,17 @@ VISTAS_OPERACIONES      = ["🛒  Despacho Operativo"]
 reportes_opts    = VISTAS_REPORTES_ADMIN if ROL == "administrador" else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
 
+# ── Inicializar estado de navegación ──────────────────────────────────────────
+if "nav_vista"         not in st.session_state:
+    st.session_state["nav_vista"]         = "📊  Dashboard"
+if "nav_rep_abierto"   not in st.session_state:
+    st.session_state["nav_rep_abierto"]   = True
+if "nav_op_abierto"    not in st.session_state:
+    st.session_state["nav_op_abierto"]    = False
+
 with st.sidebar:
 
-    # ── Logo / Título ──────────────────────────────────────────────────────────
+    # ── Logo ──────────────────────────────────────────────────────────────────
     st.markdown("""
     <div style="padding:20px 4px 8px;text-align:center">
       <div style="font-size:36px">📦</div>
@@ -588,49 +596,102 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── Sección: Reportes ──────────────────────────────────────────────────────
-    st.markdown(
-        "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px'>"
-        "📋  Reportes</div>",
-        unsafe_allow_html=True
-    )
+    # ── CSS extra para los botones de menú ────────────────────────────────────
+    st.markdown("""
+    <style>
+    /* Cabecera de sección acordeón */
+    div[data-testid="stSidebar"] .nav-section-btn > button {
+        background: rgba(255,255,255,0.06) !important;
+        color: #cbd5e1 !important;
+        border: 1px solid rgba(255,255,255,0.1) !important;
+        border-radius: 8px !important;
+        font-size: 12px !important;
+        font-weight: 700 !important;
+        text-transform: uppercase !important;
+        letter-spacing: .08em !important;
+        padding: 10px 14px !important;
+        margin-bottom: 4px !important;
+        text-align: left !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    div[data-testid="stSidebar"] .nav-section-btn > button:hover {
+        background: rgba(255,255,255,0.1) !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    /* Ítem de menú dentro del acordeón */
+    div[data-testid="stSidebar"] .nav-item-btn > button {
+        background: transparent !important;
+        color: #94a3b8 !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        padding: 7px 12px 7px 24px !important;
+        text-align: left !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    div[data-testid="stSidebar"] .nav-item-btn > button:hover {
+        background: rgba(255,255,255,0.07) !important;
+        color: #e2e8f0 !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    /* Ítem activo */
+    div[data-testid="stSidebar"] .nav-item-active > button {
+        background: rgba(24,95,165,0.35) !important;
+        color: #93c5fd !important;
+        border-left: 3px solid #3b82f6 !important;
+        font-weight: 600 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
-    vista_reporte = st.radio(
-        "reportes",
-        reportes_opts,
-        label_visibility="collapsed",
-        key="nav_reportes"
-    )
+    # ── Sección REPORTES ───────────────────────────────────────────────────────
+    rep_icon = "▼" if st.session_state["nav_rep_abierto"] else "▶"
+    st.markdown('<div class="nav-section-btn">', unsafe_allow_html=True)
+    if st.button(f"{rep_icon}  📋  Reportes", use_container_width=True, key="btn_sec_rep"):
+        st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
+        st.rerun()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Sección: Operaciones (solo admin / operario) ───────────────────────────
-    vista_operacion = None
+    if st.session_state["nav_rep_abierto"]:
+        for opcion in reportes_opts:
+            es_activo = st.session_state["nav_vista"] == opcion
+            clase = "nav-item-active" if es_activo else "nav-item-btn"
+            st.markdown(f'<div class="{clase}">', unsafe_allow_html=True)
+            if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
+                st.session_state["nav_vista"] = opcion
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    # ── Sección OPERACIONES ────────────────────────────────────────────────────
     if operaciones_opts:
-        st.markdown(
-            "<div style='font-size:9px;font-weight:700;color:#475569;"
-            "text-transform:uppercase;letter-spacing:.12em;padding:12px 4px 6px;"
-            "border-top:1px solid #1e3a5f;margin-top:8px'>"
-            "⚙️  Operaciones</div>",
-            unsafe_allow_html=True
-        )
-        vista_operacion = st.radio(
-            "operaciones",
-            operaciones_opts,
-            label_visibility="collapsed",
-            key="nav_operaciones"
-        )
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+        op_icon = "▼" if st.session_state["nav_op_abierto"] else "▶"
+        st.markdown('<div class="nav-section-btn">', unsafe_allow_html=True)
+        if st.button(f"{op_icon}  ⚙️  Operaciones", use_container_width=True, key="btn_sec_op"):
+            st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
+            st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Determinar vista activa ────────────────────────────────────────────────
-    # El último radio tocado toma precedencia; usamos session_state para rastrearlo
-    if "nav_seccion_activa" not in st.session_state:
-        st.session_state["nav_seccion_activa"] = "reportes"
+        if st.session_state["nav_op_abierto"]:
+            for opcion in operaciones_opts:
+                es_activo = st.session_state["nav_vista"] == opcion
+                clase = "nav-item-active" if es_activo else "nav-item-btn"
+                st.markdown(f'<div class="{clase}">', unsafe_allow_html=True)
+                if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
+                    st.session_state["nav_vista"] = opcion
+                    st.rerun()
+                st.markdown('</div>', unsafe_allow_html=True)
 
-    # ── Sección: Sistema ───────────────────────────────────────────────────────
-    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    # ── Sistema ────────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:0 4px 6px;"
-        "border-top:1px solid #1e3a5f'>Sistema</div>",
+        "text-transform:uppercase;letter-spacing:.12em;padding:14px 4px 6px;"
+        "border-top:1px solid #1e3a5f;margin-top:12px'>Sistema</div>",
         unsafe_allow_html=True
     )
 
@@ -649,23 +710,14 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-# ── Resolver vista activa ─────────────────────────────────────────────────────
-# Detectar cuál sección fue tocada comparando con el valor previo guardado
-_prev_reporte    = st.session_state.get("_prev_reporte",    vista_reporte)
-_prev_operacion  = st.session_state.get("_prev_operacion",  vista_operacion)
+# ── Vista activa ──────────────────────────────────────────────────────────────
+vista = st.session_state["nav_vista"]
 
-if vista_reporte != _prev_reporte:
-    st.session_state["nav_seccion_activa"] = "reportes"
-elif vista_operacion and vista_operacion != _prev_operacion:
-    st.session_state["nav_seccion_activa"] = "operaciones"
-
-st.session_state["_prev_reporte"]   = vista_reporte
-st.session_state["_prev_operacion"] = vista_operacion
-
-if st.session_state["nav_seccion_activa"] == "operaciones" and vista_operacion:
-    vista = vista_operacion
-else:
-    vista = vista_reporte
+# Asegurar que la vista esté en las opciones permitidas del rol
+todas_las_vistas = reportes_opts + operaciones_opts
+if vista not in todas_las_vistas:
+    vista = reportes_opts[0]
+    st.session_state["nav_vista"] = vista
 
 # ── Carga de datos ────────────────────────────────────────────────────────────
 
@@ -2240,4 +2292,3 @@ elif vista == "🛒  Despacho Operativo":
     if st.session_state.get("desp_op_exito") and st.session_state["desp_op_paso"] == 1:
         st.session_state["desp_op_exito"] = False
         st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
-
