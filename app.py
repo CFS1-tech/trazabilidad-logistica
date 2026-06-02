@@ -567,24 +567,91 @@ if "nav_rep_abierto" not in st.session_state:
 if "nav_op_abierto"  not in st.session_state:
     st.session_state["nav_op_abierto"]  = False
 
-# ── Leer click desde query_params ─────────────────────────────────────────────
-_qp = st.query_params
-if "nav" in _qp:
-    _val = _qp["nav"]
-    if _val == "__toggle_rep__":
-        st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
-        st.query_params.clear()
-        st.rerun()
-    elif _val == "__toggle_op__":
-        st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
-        st.query_params.clear()
-        st.rerun()
-    else:
-        todas = reportes_opts + operaciones_opts
-        if _val in todas:
-            st.session_state["nav_vista"] = _val
-        st.query_params.clear()
-        st.rerun()
+# ── Construir listas de botones del menú en orden de aparición ────────────────
+# Esto nos permite saber exactamente qué tipo es cada botón por posición
+_menu_buttons = []   # lista de dicts: {label, tipo: "section"|"item"|"active"}
+
+_menu_buttons.append({"tipo": "section"})  # Reportes
+
+if st.session_state["nav_rep_abierto"]:
+    for o in reportes_opts:
+        t = "active" if st.session_state["nav_vista"] == o else "item"
+        _menu_buttons.append({"tipo": t})
+
+if operaciones_opts:
+    _menu_buttons.append({"tipo": "section"})  # Operaciones
+    if st.session_state["nav_op_abierto"]:
+        for o in operaciones_opts:
+            t = "active" if st.session_state["nav_vista"] == o else "item"
+            _menu_buttons.append({"tipo": t})
+
+# Generar CSS apuntando a cada botón por nth-child dentro del sidebar
+# Los botones del nav son los primeros botones del sidebar (tras el usuario)
+# Usamos nth-of-type sobre los stButton dentro del sidebar
+_css_rules = []
+for _i, _b in enumerate(_menu_buttons):
+    # nth-child es 1-based; dentro del sidebar hay botones previos (sistema al final)
+    # apuntamos por data-testid del stButton específico usando ~nth~ sobre el contenedor
+    _n = _i + 1
+    if _b["tipo"] == "section":
+        _css_rules.append(f"""
+[data-testid="stSidebar"] section div[data-testid="stButton"]:nth-of-type({_n}) button {{
+    background: linear-gradient(135deg, #0f2236 0%, #1a3352 100%) !important;
+    color: #e2e8f0 !important;
+    border: 1px solid #2a4a6b !important;
+    border-radius: 8px !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: .1em !important;
+    padding: 9px 14px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.35) !important;
+    transform: none !important;
+    margin-bottom: 2px !important;
+}}""")
+    elif _b["tipo"] == "item":
+        _css_rules.append(f"""
+[data-testid="stSidebar"] section div[data-testid="stButton"]:nth-of-type({_n}) button {{
+    background: transparent !important;
+    color: #7a92ad !important;
+    border: none !important;
+    border-left: 2px solid #1e3a5f !important;
+    border-radius: 0 5px 5px 0 !important;
+    font-size: 12px !important;
+    font-weight: 400 !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    padding: 6px 8px 6px 18px !important;
+    box-shadow: none !important;
+    transform: none !important;
+    margin-left: 10px !important;
+    width: calc(100% - 10px) !important;
+}}
+[data-testid="stSidebar"] section div[data-testid="stButton"]:nth-of-type({_n}) button:hover {{
+    background: rgba(255,255,255,0.05) !important;
+    color: #cbd5e1 !important;
+    border-left: 2px solid #3b82f6 !important;
+}}""")
+    elif _b["tipo"] == "active":
+        _css_rules.append(f"""
+[data-testid="stSidebar"] section div[data-testid="stButton"]:nth-of-type({_n}) button {{
+    background: rgba(24,95,165,0.2) !important;
+    color: #93c5fd !important;
+    border: none !important;
+    border-left: 3px solid #3b82f6 !important;
+    border-radius: 0 5px 5px 0 !important;
+    font-size: 12px !important;
+    font-weight: 600 !important;
+    text-transform: none !important;
+    letter-spacing: 0 !important;
+    padding: 6px 8px 6px 17px !important;
+    box-shadow: none !important;
+    transform: none !important;
+    margin-left: 10px !important;
+    width: calc(100% - 10px) !important;
+}}""")
+
+_css_nav = "<style>" + "\n".join(_css_rules) + "\n</style>"
 
 with st.sidebar:
 
@@ -616,73 +683,40 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── Menú HTML real via components ─────────────────────────────────────────
-    vista_actual  = st.session_state["nav_vista"]
-    rep_abierto   = st.session_state["nav_rep_abierto"]
-    op_abierto    = st.session_state["nav_op_abierto"]
+    # Inyectar CSS generado antes de los botones
+    st.markdown(_css_nav, unsafe_allow_html=True)
 
-    def _item_html(label, activo, nav_key):
-        bg     = "rgba(24,95,165,0.22)" if activo else "transparent"
-        color  = "#93c5fd"              if activo else "#94a3b8"
-        bLeft  = "3px solid #3b82f6"   if activo else "2px solid #2a4060"
-        fw     = "600"                  if activo else "400"
-        import urllib.parse
-        encoded = urllib.parse.quote(nav_key)
-        return f"""
-        <a href="?nav={encoded}" style="display:block;text-decoration:none;
-           background:{bg};color:{color};border:none;border-left:{bLeft};
-           border-radius:0 6px 6px 0;font-size:12px;font-weight:{fw};
-           padding:7px 10px 7px 20px;margin:1px 0 1px 10px;
-           transition:background .15s,color .15s">
-          {label}
-        </a>"""
+    # ── Sección REPORTES ───────────────────────────────────────────────────────
+    rep_icon = "▼" if st.session_state["nav_rep_abierto"] else "▶"
+    if st.button(f"{rep_icon}  📋  Reportes", use_container_width=True, key="btn_sec_rep"):
+        st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
+        st.rerun()
 
-    # Construir HTML del menú
-    rep_arrow = "▼" if rep_abierto else "▶"
-    op_arrow  = "▼" if op_abierto  else "▶"
+    if st.session_state["nav_rep_abierto"]:
+        for opcion in reportes_opts:
+            if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
+                st.session_state["nav_vista"] = opcion
+                st.rerun()
 
-    menu_html = f"""
-    <style>
-      body {{ margin:0; padding:0; background:transparent; }}
-      .sec-btn {{
-        display:block; width:100%; text-decoration:none;
-        background:linear-gradient(135deg,#1a3352 0%,#0f2138 100%);
-        color:#cbd5e1 !important; border:1px solid #2a4a6b;
-        border-radius:8px; font-size:11px; font-weight:700;
-        text-transform:uppercase; letter-spacing:.1em;
-        padding:10px 14px; margin-bottom:4px; cursor:pointer;
-        box-sizing:border-box;
-      }}
-      .sec-btn:hover {{ background:linear-gradient(135deg,#1e3d5c 0%,#142840 100%); }}
-      .menu-wrap {{ margin-bottom:6px; }}
-    </style>
-    <div class="menu-wrap">
-      <a class="sec-btn" href="?nav=__toggle_rep__">{rep_arrow}&nbsp; 📋&nbsp; Reportes</a>
-      {"".join(_item_html(o, o == vista_actual, o) for o in reportes_opts) if rep_abierto else ""}
-    </div>
-    """
-
+    # ── Sección OPERACIONES ────────────────────────────────────────────────────
     if operaciones_opts:
-        menu_html += f"""
-    <div class="menu-wrap">
-      <a class="sec-btn" href="?nav=__toggle_op__">{op_arrow}&nbsp; ⚙️&nbsp; Operaciones</a>
-      {"".join(_item_html(o, o == vista_actual, o) for o in operaciones_opts) if op_abierto else ""}
-    </div>
-    """
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        op_icon = "▼" if st.session_state["nav_op_abierto"] else "▶"
+        if st.button(f"{op_icon}  ⚙️  Operaciones", use_container_width=True, key="btn_sec_op"):
+            st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
+            st.rerun()
 
-    # Calcular altura dinámica del menú
-    n_items = (len(reportes_opts) if rep_abierto else 0) + \
-              (len(operaciones_opts) if (op_abierto and operaciones_opts) else 0)
-    n_secs  = 1 + (1 if operaciones_opts else 0)
-    altura  = n_secs * 48 + n_items * 32 + 20
-
-    components.html(menu_html, height=altura, scrolling=False)
+        if st.session_state["nav_op_abierto"]:
+            for opcion in operaciones_opts:
+                if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
+                    st.session_state["nav_vista"] = opcion
+                    st.rerun()
 
     # ── Sistema ────────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='font-size:9px;font-weight:700;color:#475569;"
-        "text-transform:uppercase;letter-spacing:.12em;padding:10px 4px 6px;"
-        "border-top:1px solid #1e3a5f;margin-top:4px'>Sistema</div>",
+        "text-transform:uppercase;letter-spacing:.12em;padding:14px 4px 6px;"
+        "border-top:1px solid #1e3a5f;margin-top:10px'>Sistema</div>",
         unsafe_allow_html=True
     )
 
