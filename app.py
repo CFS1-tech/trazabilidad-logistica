@@ -481,8 +481,9 @@ def botones_descarga(df_display, nombre):
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 USUARIOS = {
-    "admin":    {"password": "admin123",  "rol": "administrador"},
-    "Masef_CFS":  {"password": "Masef2026","rol": "cliente"},
+    "admin":      {"password": "admin123",   "rol": "administrador"},
+    "Masef_CFS":  {"password": "Masef2026",  "rol": "cliente"},
+    "operario":   {"password": "Op2026",     "rol": "operario"},
 }
 
 if "autenticado" not in st.session_state:
@@ -556,7 +557,7 @@ VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
 VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN"]
 
-reportes_opts    = VISTAS_REPORTES_ADMIN if ROL == "administrador" else VISTAS_REPORTES_CLIENTE
+reportes_opts    = VISTAS_REPORTES_ADMIN if ROL in ("administrador", "operario") else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
 
 # ── Inicializar estado de navegación ──────────────────────────────────────────
