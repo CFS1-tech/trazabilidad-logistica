@@ -559,12 +559,18 @@ reportes_opts    = VISTAS_REPORTES_ADMIN if ROL == "administrador" else VISTAS_R
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
 
 # ── Inicializar estado de navegación ──────────────────────────────────────────
-if "nav_vista"         not in st.session_state:
-    st.session_state["nav_vista"]         = "📊  Dashboard"
-if "nav_rep_abierto"   not in st.session_state:
-    st.session_state["nav_rep_abierto"]   = True
-if "nav_op_abierto"    not in st.session_state:
-    st.session_state["nav_op_abierto"]    = False
+if "nav_vista"       not in st.session_state:
+    st.session_state["nav_vista"]       = "📊  Dashboard"
+if "nav_rep_abierto" not in st.session_state:
+    st.session_state["nav_rep_abierto"] = True
+if "nav_op_abierto"  not in st.session_state:
+    st.session_state["nav_op_abierto"]  = False
+
+# Índices de botones para aplicar estilos vía JS:
+# 0 = btn_sec_rep
+# 1..N = ítems de reportes (si abierto)
+# N+1 = btn_sec_op  (si existe)
+# N+2.. = ítems de operaciones (si abierto)
 
 with st.sidebar:
 
@@ -596,121 +602,126 @@ with st.sidebar:
         unsafe_allow_html=True
     )
 
-    # ── CSS extra para los botones de menú ────────────────────────────────────
-    st.markdown("""
-    <style>
-    /* ── Cabecera de sección (Reportes / Operaciones) ── */
-    div[data-testid="stSidebar"] .nav-section-btn > button {
-        background: linear-gradient(135deg, #1e3a5f 0%, #1a2f4a 100%) !important;
-        color: #e2e8f0 !important;
-        border: 1px solid #2d5278 !important;
-        border-radius: 8px !important;
-        font-size: 12px !important;
-        font-weight: 700 !important;
-        text-transform: uppercase !important;
-        letter-spacing: .1em !important;
-        padding: 10px 14px !important;
-        margin-bottom: 2px !important;
-        box-shadow: 0 2px 6px rgba(0,0,0,0.25) !important;
-        transform: none !important;
-    }
-    div[data-testid="stSidebar"] .nav-section-btn > button:hover {
-        background: linear-gradient(135deg, #24456e 0%, #1e3a5f 100%) !important;
-        box-shadow: 0 3px 8px rgba(0,0,0,0.3) !important;
-        transform: none !important;
-    }
+    # ── Marcador de inicio del menú ───────────────────────────────────────────
+    st.markdown('<div id="wms-nav-start"></div>', unsafe_allow_html=True)
 
-    /* ── Ítem normal del submenú ── */
-    div[data-testid="stSidebar"] .nav-item-btn > button {
-        background: transparent !important;
-        color: #94a3b8 !important;
-        border: none !important;
-        border-left: 2px solid #1e3a5f !important;
-        border-radius: 0 6px 6px 0 !important;
-        font-size: 12px !important;
-        font-weight: 400 !important;
-        padding: 6px 10px 6px 20px !important;
-        margin-left: 8px !important;
-        text-align: left !important;
-        box-shadow: none !important;
-        transform: none !important;
-        letter-spacing: 0 !important;
-        text-transform: none !important;
-    }
-    div[data-testid="stSidebar"] .nav-item-btn > button:hover {
-        background: rgba(255,255,255,0.05) !important;
-        color: #cbd5e1 !important;
-        border-left: 2px solid #3b82f6 !important;
-        box-shadow: none !important;
-        transform: none !important;
-    }
-
-    /* ── Ítem activo del submenú ── */
-    div[data-testid="stSidebar"] .nav-item-active > button {
-        background: rgba(24,95,165,0.2) !important;
-        color: #93c5fd !important;
-        border: none !important;
-        border-left: 3px solid #3b82f6 !important;
-        border-radius: 0 6px 6px 0 !important;
-        font-size: 12px !important;
-        font-weight: 600 !important;
-        padding: 6px 10px 6px 20px !important;
-        margin-left: 8px !important;
-        box-shadow: none !important;
-        transform: none !important;
-        letter-spacing: 0 !important;
-        text-transform: none !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    # ── Sección REPORTES ───────────────────────────────────────────────────────
+    # ── Botón cabecera REPORTES ───────────────────────────────────────────────
     rep_icon = "▼" if st.session_state["nav_rep_abierto"] else "▶"
-    st.markdown('<div class="nav-section-btn">', unsafe_allow_html=True)
     if st.button(f"{rep_icon}  📋  Reportes", use_container_width=True, key="btn_sec_rep"):
         st.session_state["nav_rep_abierto"] = not st.session_state["nav_rep_abierto"]
         st.rerun()
-    st.markdown('</div>', unsafe_allow_html=True)
 
+    # ── Ítems de REPORTES ─────────────────────────────────────────────────────
+    _rep_item_indices = []
+    _rep_activo_idx   = None
     if st.session_state["nav_rep_abierto"]:
-        st.markdown(
-            "<div style='border-left:2px solid #1e3a5f;margin:2px 0 6px 10px;padding:2px 0'>",
-            unsafe_allow_html=True
-        )
-        for opcion in reportes_opts:
-            es_activo = st.session_state["nav_vista"] == opcion
-            clase = "nav-item-active" if es_activo else "nav-item-btn"
-            st.markdown(f'<div class="{clase}">', unsafe_allow_html=True)
+        for i, opcion in enumerate(reportes_opts):
             if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
                 st.session_state["nav_vista"] = opcion
                 st.rerun()
-            st.markdown('</div>', unsafe_allow_html=True)
-        st.markdown('</div>', unsafe_allow_html=True)
+            _rep_item_indices.append(i + 1)          # índice relativo en sidebar
+            if st.session_state["nav_vista"] == opcion:
+                _rep_activo_idx = i + 1
 
-    # ── Sección OPERACIONES ────────────────────────────────────────────────────
+    # ── Separador ─────────────────────────────────────────────────────────────
+    _op_section_offset = 1 + (len(reportes_opts) if st.session_state["nav_rep_abierto"] else 0)
+
+    # ── Botón cabecera OPERACIONES ────────────────────────────────────────────
+    _op_item_indices = []
+    _op_activo_idx   = None
     if operaciones_opts:
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
         op_icon = "▼" if st.session_state["nav_op_abierto"] else "▶"
-        st.markdown('<div class="nav-section-btn">', unsafe_allow_html=True)
         if st.button(f"{op_icon}  ⚙️  Operaciones", use_container_width=True, key="btn_sec_op"):
             st.session_state["nav_op_abierto"] = not st.session_state["nav_op_abierto"]
             st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
 
         if st.session_state["nav_op_abierto"]:
-            st.markdown(
-                "<div style='border-left:2px solid #1e3a5f;margin:2px 0 6px 10px;padding:2px 0'>",
-                unsafe_allow_html=True
-            )
-            for opcion in operaciones_opts:
-                es_activo = st.session_state["nav_vista"] == opcion
-                clase = "nav-item-active" if es_activo else "nav-item-btn"
-                st.markdown(f'<div class="{clase}">', unsafe_allow_html=True)
+            for i, opcion in enumerate(operaciones_opts):
                 if st.button(opcion, use_container_width=True, key=f"nav_{opcion}"):
                     st.session_state["nav_vista"] = opcion
                     st.rerun()
-                st.markdown('</div>', unsafe_allow_html=True)
-            st.markdown('</div>', unsafe_allow_html=True)
+                idx = _op_section_offset + 1 + i
+                _op_item_indices.append(idx)
+                if st.session_state["nav_vista"] == opcion:
+                    _op_activo_idx = idx
+
+    # ── JS: aplicar estilos REALES directamente sobre los botones del DOM ─────
+    # Calculamos qué índice (0-based) corresponde a cada botón dentro del sidebar
+    _js_section_indices = [0]   # índice 0 = btn_sec_rep
+    if operaciones_opts:
+        _js_section_indices.append(_op_section_offset)  # btn_sec_op
+
+    _js_active_idx   = _rep_activo_idx if _rep_activo_idx is not None else _op_activo_idx
+    _js_item_indices = _rep_item_indices + _op_item_indices
+
+    st.markdown(f"""
+    <script>
+    (function() {{
+      function styleNav() {{
+        var sidebar = document.querySelector('[data-testid="stSidebar"]');
+        if (!sidebar) return;
+        var marker = sidebar.querySelector('#wms-nav-start');
+        if (!marker) return;
+
+        // Recoge todos los botones del sidebar que vienen DESPUÉS del marcador
+        var allBtns = Array.from(sidebar.querySelectorAll('button'));
+        var markerRect = marker.getBoundingClientRect();
+        var navBtns = allBtns.filter(function(b) {{
+          return b.getBoundingClientRect().top >= markerRect.top - 5;
+        }});
+
+        var sectionIdxs = {_js_section_indices};
+        var itemIdxs    = {_js_item_indices};
+        var activeIdx   = {_js_active_idx if _js_active_idx is not None else 'null'};
+
+        navBtns.forEach(function(btn, i) {{
+          // Reset
+          btn.style.cssText = '';
+
+          if (sectionIdxs.indexOf(i) !== -1) {{
+            // Cabecera de sección
+            btn.style.background    = 'linear-gradient(135deg,#1a3352 0%,#142840 100%)';
+            btn.style.color         = '#e2e8f0';
+            btn.style.border        = '1px solid #2a4a6b';
+            btn.style.borderRadius  = '8px';
+            btn.style.fontSize      = '11px';
+            btn.style.fontWeight    = '700';
+            btn.style.textTransform = 'uppercase';
+            btn.style.letterSpacing = '.09em';
+            btn.style.padding       = '10px 14px';
+            btn.style.boxShadow     = '0 2px 6px rgba(0,0,0,.3)';
+            btn.style.marginBottom  = '2px';
+            btn.style.width         = '100%';
+          }} else if (itemIdxs.indexOf(i) !== -1) {{
+            // Ítem de submenú
+            var isActive = (i === activeIdx);
+            btn.style.background    = isActive ? 'rgba(24,95,165,0.18)' : 'transparent';
+            btn.style.color         = isActive ? '#93c5fd' : '#94a3b8';
+            btn.style.border        = 'none';
+            btn.style.borderLeft    = isActive ? '3px solid #3b82f6' : '2px solid #1e3a5f';
+            btn.style.borderRadius  = '0 6px 6px 0';
+            btn.style.fontSize      = '12px';
+            btn.style.fontWeight    = isActive ? '600' : '400';
+            btn.style.padding       = '6px 10px 6px 18px';
+            btn.style.marginLeft    = '8px';
+            btn.style.width         = 'calc(100% - 8px)';
+            btn.style.textAlign     = 'left';
+            btn.style.boxShadow     = 'none';
+            btn.style.letterSpacing = '0';
+            btn.style.textTransform = 'none';
+          }}
+        }});
+      }}
+
+      // Ejecutar al cargar y observar cambios
+      styleNav();
+      var obs = new MutationObserver(styleNav);
+      obs.observe(document.body, {{ childList: true, subtree: true }});
+      setTimeout(styleNav, 300);
+      setTimeout(styleNav, 800);
+    }})();
+    </script>
+    """, unsafe_allow_html=True)
 
     # ── Sistema ────────────────────────────────────────────────────────────────
     st.markdown(
