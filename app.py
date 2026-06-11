@@ -242,24 +242,25 @@ def cargar_datos() -> pd.DataFrame:
 
     ws = sh.worksheet(SHEET_NAME)
 
+    # FORMATTED_VALUE trae los valores tal como se ven en pantalla
+    # evitando que gspread devuelva números seriales para las fechas
     df = pd.DataFrame(
-        ws.get_all_records()
+        ws.get_all_records(value_render_option="FORMATTED_VALUE")
     )
 
     def parse_fecha(col):
         col = col.astype(str).str.strip()
 
-        # Intentar múltiples formatos en orden
+        # Intentar múltiples formatos en orden de prioridad
         formatos = [
-            "%d/%m/%Y",   # 24/03/2026  — formato principal de la sheet
-            "%Y-%m-%d",   # 2026-03-24  — formato ISO
-            "%d-%m-%Y",   # 24-03-2026
-            "%m/%d/%Y",   # 03/24/2026  — formato US
+            "%d/%m/%Y",    # 24/03/2026  — formato principal de la sheet
+            "%d/%m/%y",    # 24/03/26    — año corto
+            "%Y-%m-%d",    # 2026-03-24  — ISO (filas insertadas por el sistema)
+            "%d-%m-%Y",    # 24-03-2026
         ]
 
         parsed = pd.Series(pd.NaT, index=col.index)
-
-        pendientes = col.str.strip().ne("") & col.ne("nan")
+        pendientes = col.ne("") & col.ne("nan") & col.ne("NaT") & col.ne("None")
 
         for fmt in formatos:
             mask = pendientes & parsed.isna()
@@ -276,21 +277,14 @@ def cargar_datos() -> pd.DataFrame:
 
         return parsed
 
-    df["FECHA"] = parse_fecha(
-        df["FECHA"].astype(str)
-    )
-
-    df["FECHA VCTO"] = parse_fecha(
-        df["FECHA VCTO"].astype(str)
-    )
+    df["FECHA"] = parse_fecha(df["FECHA"].astype(str))
+    df["FECHA VCTO"] = parse_fecha(df["FECHA VCTO"].astype(str))
 
     df["TOTAL UNIT"] = pd.to_numeric(
-        df["TOTAL UNIT"],
-        errors="coerce"
+        df["TOTAL UNIT"], errors="coerce"
     ).fillna(0).astype(int)
 
     df["SKU MASEF"] = df["SKU MASEF"].astype(str)
-
     df["CTN"] = df["CTN"].astype(str)
 
     return df.dropna(subset=["FECHA"])
