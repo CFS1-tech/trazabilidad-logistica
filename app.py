@@ -247,25 +247,31 @@ def cargar_datos() -> pd.DataFrame:
     )
 
     def parse_fecha(col):
+        col = col.astype(str).str.strip()
 
-        parsed = pd.to_datetime(
-            col,
-            dayfirst=True,
-            errors="coerce"
-        )
+        # Intentar múltiples formatos en orden
+        formatos = [
+            "%d/%m/%Y",   # 24/03/2026  — formato principal de la sheet
+            "%Y-%m-%d",   # 2026-03-24  — formato ISO
+            "%d-%m-%Y",   # 24-03-2026
+            "%m/%d/%Y",   # 03/24/2026  — formato US
+        ]
 
-        mask = (
-            parsed.isna()
-            &
-            col.astype(str).str.strip().ne("")
-        )
+        parsed = pd.Series(pd.NaT, index=col.index)
 
-        if mask.any():
+        pendientes = col.str.strip().ne("") & col.ne("nan")
 
-            parsed[mask] = pd.to_datetime(
-                col[mask],
-                format="%Y-%m-%d",
-                errors="coerce"
+        for fmt in formatos:
+            mask = pendientes & parsed.isna()
+            if not mask.any():
+                break
+            parsed[mask] = pd.to_datetime(col[mask], format=fmt, errors="coerce")
+
+        # Último intento: parser automático con dayfirst=True
+        mask_final = pendientes & parsed.isna()
+        if mask_final.any():
+            parsed[mask_final] = pd.to_datetime(
+                col[mask_final], dayfirst=True, errors="coerce"
             )
 
         return parsed
@@ -345,24 +351,27 @@ def calcular_stock(
     )
 
     # ─────────────────────────────────────────────
-    # PASO 1: SKUs con stock NETO > 0
-    # Solo los SKUs donde la suma total de TOTAL UNIT
-    # es mayor a 0 tienen stock real en almacén.
+    # PASO 1: Combinaciones SKU+CTN con neto > 0
+    # Filtramos por SKU+CTN para no descartar un
+    # SKU completo cuando tiene salidas en exceso
+    # en otro contenedor distinto.
     # ─────────────────────────────────────────────
 
-    neto_por_sku = (
+    neto_por_sku_ctn = (
         sub
-        .groupby("SKU MASEF")["TOTAL UNIT"]
+        .groupby(["SKU MASEF", "CTN"])["TOTAL UNIT"]
         .sum()
     )
 
-    skus_con_stock = neto_por_sku[neto_por_sku > 0].index
+    skus_ctns_con_stock = neto_por_sku_ctn[neto_por_sku_ctn > 0].reset_index()[["SKU MASEF", "CTN"]]
+    skus_ctns_con_stock["_key"] = skus_ctns_con_stock["SKU MASEF"] + "||" + skus_ctns_con_stock["CTN"]
 
     # ─────────────────────────────────────────────
-    # PASO 2: Filtrar solo filas de esos SKUs
+    # PASO 2: Filtrar solo filas de esas combos
     # ─────────────────────────────────────────────
 
-    sub_valido = sub[sub["SKU MASEF"].isin(skus_con_stock)]
+    sub["_key"] = sub["SKU MASEF"] + "||" + sub["CTN"]
+    sub_valido  = sub[sub["_key"].isin(skus_ctns_con_stock["_key"])].drop(columns=["_key"])
 
     # ─────────────────────────────────────────────
     # PASO 3: Agrupar por detalle y quedarse
@@ -481,9 +490,9 @@ def botones_descarga(df_display, nombre):
 # ── Login ─────────────────────────────────────────────────────────────────────
 
 USUARIOS = {
-    "admin":      {"password": "Duquesa24",   "rol": "administrador"},
+    "admin":      {"password": "admin123",   "rol": "administrador"},
     "Masef_CFS":  {"password": "Masef2026",  "rol": "cliente"},
-    "CargoflexSupply":   {"password": "CFS2026",     "rol": "operador"},
+    "operario":   {"password": "Op2026",     "rol": "operario"},
 }
 
 if "autenticado" not in st.session_state:
@@ -555,7 +564,7 @@ ROL = st.session_state["rol"]
 
 VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "⚠️  Salida de Merma"]
 
 reportes_opts    = VISTAS_REPORTES_ADMIN if ROL in ("administrador", "operario") else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
@@ -2243,58 +2252,79 @@ elif vista == "🛒  Despacho Operativo":
 
             with col_conf:
                 if st.button("✅  Confirmar y registrar salida", use_container_width=True, type="primary"):
-                    try:
-                        client_tmp = get_client()
-                        sh_tmp     = client_tmp.open_by_key(st.secrets["spreadsheet_id"])
-                        ws_tmp     = sh_tmp.worksheet(SHEET_NAME)
-                        headers    = ws_tmp.row_values(1)
-                    except Exception as e:
-                        st.error(f"❌ No se pudo leer la hoja: {e}")
-                        headers = []
 
-                    if headers:
-                        fecha_str        = st.session_state["desp_op_fecha"].strftime("%d/%m/%Y")
-                        guia_str         = st.session_state["desp_op_guia"]
-                        cliente_str      = st.session_state["desp_op_cliente"]
-                        obs_str          = st.session_state["desp_op_obs"]
-                        filas_a_insertar = []
+                    # Guard: evitar doble inserción
+                    if st.session_state.get("desp_op_procesando"):
+                        st.warning("⏳ Ya se está procesando, espera un momento.")
+                    else:
+                        st.session_state["desp_op_procesando"] = True
 
-                        for item in st.session_state["desp_op_items"]:
-                            fila = []
-                            for h in headers:
-                                h_up = h.upper().strip()
-                                if h_up == "FECHA":
-                                    fila.append(fecha_str)
-                                elif h_up == "CTN":
-                                    fila.append(item["CTN"])
-                                elif h_up in ("SKU MASEF", "SKU"):
-                                    fila.append(item["SKU MASEF"])
-                                elif h_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
-                                    fila.append(item["DESCRIPTION"])
-                                elif h_up == "ESTADO":
-                                    fila.append(item["ESTADO"])
-                                elif h_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO"):
-                                    fila.append(item["FECHA VCTO"])
-                                elif h_up in ("TIPO DE MOVIMIENTO", "TIPO MOVIMIENTO", "MOVIMIENTO"):
-                                    fila.append("SALIDA")
-                                elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
-                                    fila.append(-abs(item["cantidad"]))
-                                elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
-                                    fila.append(guia_str)
-                                elif h_up in ("CLIENTE", "CLIENT", "TIENDA"):
-                                    fila.append(cliente_str)
-                                elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
-                                    fila.append(obs_str)
+                        try:
+                            client_tmp = get_client()
+                            sh_tmp     = client_tmp.open_by_key(st.secrets["spreadsheet_id"])
+                            ws_tmp     = sh_tmp.worksheet(SHEET_NAME)
+                            headers    = ws_tmp.row_values(1)
+                        except Exception as e:
+                            st.error(f"❌ No se pudo leer la hoja: {e}")
+                            headers = []
+                            st.session_state["desp_op_procesando"] = False
+
+                        if headers:
+                            # FECHA siempre DD/MM/YYYY como texto plano
+                            fecha_str   = st.session_state["desp_op_fecha"].strftime("%d/%m/%Y")
+                            guia_str    = st.session_state["desp_op_guia"]
+                            cliente_str = st.session_state["desp_op_cliente"]
+                            obs_str     = st.session_state["desp_op_obs"]
+                            filas_a_insertar = []
+
+                            for item in st.session_state["desp_op_items"]:
+                                # Normalizar FECHA VCTO a DD/MM/YYYY
+                                vcto_raw = item.get("FECHA VCTO", "")
+                                if vcto_raw and vcto_raw not in ("", "—", "nan"):
+                                    try:
+                                        vcto_str = pd.to_datetime(vcto_raw, dayfirst=False, errors="coerce")
+                                        vcto_str = vcto_str.strftime("%d/%m/%Y") if not pd.isna(vcto_str) else vcto_raw
+                                    except:
+                                        vcto_str = vcto_raw
                                 else:
-                                    fila.append("")
-                            filas_a_insertar.append(fila)
+                                    vcto_str = ""
 
-                        ok = insertar_salidas(filas_a_insertar)
-                        if ok:
-                            st.cache_data.clear()
-                            reset_desp_op()
-                            st.session_state["desp_op_exito"] = True
-                            st.rerun()
+                                fila = []
+                                for h in headers:
+                                    h_up = h.upper().strip()
+                                    if h_up == "FECHA":
+                                        fila.append(fecha_str)
+                                    elif h_up == "CTN":
+                                        fila.append(item["CTN"])
+                                    elif h_up in ("SKU MASEF", "SKU"):
+                                        fila.append(item["SKU MASEF"])
+                                    elif h_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
+                                        fila.append(item["DESCRIPTION"])
+                                    elif h_up == "ESTADO":
+                                        fila.append(item["ESTADO"])
+                                    elif h_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO"):
+                                        fila.append(vcto_str)
+                                    elif h_up in ("TIPO DE MOVIMIENTO", "TIPO MOVIMIENTO", "MOVIMIENTO"):
+                                        fila.append("SALIDA")
+                                    elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
+                                        fila.append(-abs(item["cantidad"]))
+                                    elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
+                                        fila.append(guia_str)
+                                    elif h_up in ("CLIENTE", "CLIENT", "TIENDA"):
+                                        fila.append(cliente_str)
+                                    elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
+                                        fila.append(obs_str)
+                                    else:
+                                        fila.append("")
+                                filas_a_insertar.append(fila)
+
+                            ok = insertar_salidas(filas_a_insertar)
+                            st.session_state["desp_op_procesando"] = False
+                            if ok:
+                                st.cache_data.clear()
+                                reset_desp_op()
+                                st.session_state["desp_op_exito"] = True
+                                st.rerun()
 
             with col_volver:
                 if st.button("✏️  Editar cabecera", use_container_width=True):
@@ -2607,3 +2637,340 @@ elif vista == "🔄  Cambio de Estado CTN":
         if st.session_state.get("estado_ctn_ok"):
             st.session_state["estado_ctn_ok"] = False
             st.success(f"✅ CTN {f_ctn_sel} marcado como REVISADO correctamente.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: SALIDA DE MERMA
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "⚠️  Salida de Merma":
+
+    st.markdown(f"""
+    <div class="wms-header">
+      <div style="font-size:32px">⚠️</div>
+      <div>
+        <h1>Salida de Merma</h1>
+        <p>Registrar salidas de productos en estado MERMA</p>
+      </div>
+      <span class="wms-badge">Operación</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Inicializar session state ──────────────────────────────────────────────
+    for _k, _v in [
+        ("merma_op_paso",         1),
+        ("merma_op_fecha",        date.today()),
+        ("merma_op_guia",         ""),
+        ("merma_op_obs",          ""),
+        ("merma_op_ctn",          ""),
+        ("merma_op_seleccion",    {}),   # {item_key: cantidad}
+        ("merma_op_exito",        False),
+        ("merma_op_procesando",   False),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    def reset_merma_op():
+        st.session_state["merma_op_paso"]       = 1
+        st.session_state["merma_op_fecha"]      = date.today()
+        st.session_state["merma_op_guia"]       = ""
+        st.session_state["merma_op_obs"]        = ""
+        st.session_state["merma_op_ctn"]        = ""
+        st.session_state["merma_op_seleccion"]  = {}
+        st.session_state["merma_op_exito"]      = False
+        st.session_state["merma_op_procesando"] = False
+
+    def insertar_merma(filas: list) -> bool:
+        try:
+            client  = get_client()
+            sh      = client.open_by_key(st.secrets["spreadsheet_id"])
+            ws      = sh.worksheet(SHEET_NAME)
+            ws.append_rows(filas, value_input_option="USER_ENTERED")
+            return True
+        except Exception as e:
+            st.error(f"❌ Error al guardar en Google Sheets: {e}")
+            return False
+
+    # ── Obtener CTNs que tienen MERMA ─────────────────────────────────────────
+    stock_merma_global = calcular_stock(df[df["ESTADO"] == "MERMA"], date.today())
+    ctns_con_merma = sorted(stock_merma_global["CTN"].dropna().astype(str).unique().tolist())
+
+    if not ctns_con_merma:
+        st.info("No hay productos en estado MERMA registrados en el sistema.")
+        st.stop()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PASO 1 — Cabecera
+    # ══════════════════════════════════════════════════════════════════════════
+    if st.session_state["merma_op_paso"] == 1:
+
+        st.markdown("""
+        <div style="background:#fef3c7;border-left:4px solid #f59e0b;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#92400e;margin-bottom:16px">
+          <b>Paso 1 de 2</b> — Completa los datos de la salida y selecciona el contenedor.
+        </div>
+        """, unsafe_allow_html=True)
+
+        with st.form("form_merma_cabecera"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_fecha = st.date_input(
+                    "📅 Fecha de salida",
+                    value=st.session_state["merma_op_fecha"]
+                )
+                inp_ctn = st.selectbox(
+                    "📦 Contenedor (CTN)",
+                    ctns_con_merma,
+                    index=ctns_con_merma.index(st.session_state["merma_op_ctn"])
+                    if st.session_state["merma_op_ctn"] in ctns_con_merma else 0
+                )
+            with c2:
+                inp_guia = st.text_input(
+                    "📄 N° de Guía / Referencia",
+                    value=st.session_state["merma_op_guia"],
+                    placeholder="Ej: MR-2026-001"
+                )
+                inp_obs = st.text_input(
+                    "💬 Observación (opcional)",
+                    value=st.session_state["merma_op_obs"],
+                    placeholder="Ej: Destrucción programada"
+                )
+
+            continuar = st.form_submit_button(
+                "➡️  Continuar — Ver merma del CTN",
+                use_container_width=True
+            )
+
+        if continuar:
+            if not inp_guia.strip():
+                st.warning("⚠️ Debes ingresar un N° de Guía / Referencia.")
+            else:
+                st.session_state["merma_op_fecha"] = inp_fecha
+                st.session_state["merma_op_guia"]  = inp_guia.strip()
+                st.session_state["merma_op_obs"]   = inp_obs.strip()
+                st.session_state["merma_op_ctn"]   = str(inp_ctn)
+                st.session_state["merma_op_paso"]  = 2
+                st.session_state["merma_op_seleccion"] = {}
+                st.rerun()
+
+    # ══════════════════════════════════════════════════════════════════════════
+    # PASO 2 — Selección de ítems
+    # ══════════════════════════════════════════════════════════════════════════
+    else:
+        ctn_sel    = st.session_state["merma_op_ctn"]
+        fecha_sel  = st.session_state["merma_op_fecha"]
+        guia_sel   = st.session_state["merma_op_guia"]
+        obs_sel    = st.session_state["merma_op_obs"]
+
+        # ── Banner fijo ───────────────────────────────────────────────────────
+        items_sel = len([v for v in st.session_state["merma_op_seleccion"].values() if v > 0])
+        total_sel = sum(st.session_state["merma_op_seleccion"].values())
+
+        st.markdown(f"""
+        <div style="background:#0d1b2a;border-radius:10px;padding:14px 20px;
+                    margin-bottom:16px;display:flex;gap:24px;align-items:center;
+                    box-shadow:0 2px 8px rgba(0,0,0,0.15)">
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Guía</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{guia_sel}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">CTN</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{ctn_sel}</div>
+          </div>
+          <div>
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Fecha</div>
+            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{fecha_sel.strftime('%d/%m/%Y')}</div>
+          </div>
+          <div style="margin-left:auto;text-align:right">
+            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Seleccionados / Unidades</div>
+            <div style="font-size:16px;font-weight:700;color:#fbbf24">{items_sel} ítems &nbsp;·&nbsp; {total_sel:,} u.</div>
+          </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # ── Lista de merma del CTN ────────────────────────────────────────────
+        merma_ctn = stock_merma_global[
+            stock_merma_global["CTN"].astype(str) == ctn_sel
+        ].copy()
+
+        if merma_ctn.empty:
+            st.info(f"No hay merma registrada para el CTN {ctn_sel}.")
+        else:
+            st.markdown(
+                f"<div style='font-size:11px;font-weight:700;color:#64748b;"
+                f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+                f"⚠️ Merma disponible en CTN {ctn_sel} — {len(merma_ctn)} ítem(s)</div>",
+                unsafe_allow_html=True
+            )
+
+            for _, row in merma_ctn.iterrows():
+                sku       = str(row["SKU MASEF"])
+                desc      = str(row.get("DESCRIPTION", ""))
+                estado    = str(row["ESTADO"])
+                stock_d   = int(row["Stock"])
+                vcto      = str(row.get("FECHA VCTO", "")) or "—"
+                item_key  = f"{sku}||{ctn_sel}||{estado}||{vcto}"
+
+                seleccion_actual = st.session_state["merma_op_seleccion"].get(item_key, 0)
+                marcado = seleccion_actual > 0
+
+                # Card del ítem
+                bg_card = "rgba(245,158,11,0.08)" if marcado else "#ffffff"
+                border  = "1.5px solid #f59e0b"  if marcado else "1px solid #e2e8f0"
+                st.markdown(f"""
+                <div style="background:{bg_card};border:{border};border-radius:10px;
+                            padding:14px 18px;margin-bottom:6px;
+                            box-shadow:0 1px 3px rgba(0,0,0,0.05)">
+                  <div style="font-size:11px;font-weight:700;color:#d97706;
+                              text-transform:uppercase;letter-spacing:.06em">{sku}</div>
+                  <div style="font-size:14px;font-weight:600;color:#0f172a;margin:2px 0 4px">{desc}</div>
+                  <div style="font-size:11px;color:#64748b">
+                    🏷️ Estado: <b>{estado}</b> &nbsp;|&nbsp;
+                    📅 Vcto: <b>{vcto}</b> &nbsp;|&nbsp;
+                    <span style="color:#ef4444;font-weight:700">Stock merma: {stock_d:,} u.</span>
+                  </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                col_chk, col_qty = st.columns([3, 1])
+                with col_chk:
+                    incluir = st.checkbox(
+                        f"Incluir en salida",
+                        value=marcado,
+                        key=f"chk_merma_{item_key}"
+                    )
+                with col_qty:
+                    if incluir:
+                        cant = st.number_input(
+                            "Cantidad",
+                            min_value=1,
+                            max_value=stock_d,
+                            value=max(1, seleccion_actual),
+                            step=1,
+                            key=f"qty_merma_{item_key}",
+                            label_visibility="collapsed"
+                        )
+                        st.session_state["merma_op_seleccion"][item_key] = cant
+                    else:
+                        st.session_state["merma_op_seleccion"][item_key] = 0
+                        st.markdown(
+                            "<div style='font-size:11px;color:#94a3b8;margin-top:8px'>—</div>",
+                            unsafe_allow_html=True
+                        )
+
+            # ── Resumen y confirmación ────────────────────────────────────────
+            items_a_guardar = {
+                k: v for k, v in st.session_state["merma_op_seleccion"].items() if v > 0
+            }
+
+            st.divider()
+
+            if items_a_guardar:
+                total_guardar = sum(items_a_guardar.values())
+                st.markdown(
+                    f"<div style='background:#fef3c7;border-left:4px solid #f59e0b;"
+                    f"border-radius:6px;padding:10px 16px;font-size:13px;color:#92400e;margin-bottom:12px'>"
+                    f"Se registrarán <b>{len(items_a_guardar)} ítem(s)</b> con un total de "
+                    f"<b>{total_guardar:,} unidades</b> como salida de merma.</div>",
+                    unsafe_allow_html=True
+                )
+
+            col_ok, col_volver, col_can = st.columns([3, 1, 1])
+
+            with col_ok:
+                btn_label = f"✅  Registrar salida de merma ({len(items_a_guardar)} ítem(s))"
+                btn_disabled = len(items_a_guardar) == 0
+                if st.button(btn_label, use_container_width=True,
+                             type="primary", disabled=btn_disabled):
+
+                    if st.session_state.get("merma_op_procesando"):
+                        st.warning("⏳ Ya se está procesando, espera un momento.")
+                    else:
+                        st.session_state["merma_op_procesando"] = True
+                        try:
+                            client_m  = get_client()
+                            sh_m      = client_m.open_by_key(st.secrets["spreadsheet_id"])
+                            ws_m      = sh_m.worksheet(SHEET_NAME)
+                            headers_m = ws_m.row_values(1)
+                        except Exception as e:
+                            st.error(f"❌ No se pudo leer la hoja: {e}")
+                            headers_m = []
+                            st.session_state["merma_op_procesando"] = False
+
+                        if headers_m:
+                            fecha_str = fecha_sel.strftime("%d/%m/%Y")
+                            filas_merma = []
+
+                            for item_key, cantidad in items_a_guardar.items():
+                                partes  = item_key.split("||")
+                                sku_m   = partes[0]
+                                ctn_m   = partes[1]
+                                est_m   = partes[2]
+                                vcto_m  = partes[3] if len(partes) > 3 else ""
+
+                                # Normalizar fecha vcto
+                                if vcto_m and vcto_m not in ("—", "nan", ""):
+                                    try:
+                                        vcto_fmt = pd.to_datetime(vcto_m, dayfirst=False, errors="coerce")
+                                        vcto_m   = vcto_fmt.strftime("%d/%m/%Y") if not pd.isna(vcto_fmt) else vcto_m
+                                    except:
+                                        pass
+
+                                # Buscar descripción
+                                desc_m = ""
+                                filt = df[
+                                    (df["SKU MASEF"].astype(str).str.strip() == sku_m) &
+                                    (df["CTN"].astype(str).str.strip() == ctn_m)
+                                ]
+                                if not filt.empty:
+                                    desc_m = str(filt["DESCRIPTION"].iloc[0])
+
+                                fila = []
+                                for h in headers_m:
+                                    h_up = h.upper().strip()
+                                    if h_up == "FECHA":
+                                        fila.append(fecha_str)
+                                    elif h_up == "CTN":
+                                        fila.append(ctn_m)
+                                    elif h_up in ("SKU MASEF", "SKU"):
+                                        fila.append(sku_m)
+                                    elif h_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
+                                        fila.append(desc_m)
+                                    elif h_up == "ESTADO":
+                                        fila.append("MERMA")
+                                    elif h_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO"):
+                                        fila.append(vcto_m)
+                                    elif h_up in ("TIPO DE MOVIMIENTO", "TIPO MOVIMIENTO", "MOVIMIENTO"):
+                                        fila.append("SALIDA")
+                                    elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
+                                        fila.append(-abs(cantidad))
+                                    elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
+                                        fila.append(guia_sel)
+                                    elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
+                                        fila.append(obs_sel)
+                                    else:
+                                        fila.append("")
+                                filas_merma.append(fila)
+
+                            ok = insertar_merma(filas_merma)
+                            st.session_state["merma_op_procesando"] = False
+                            if ok:
+                                st.cache_data.clear()
+                                reset_merma_op()
+                                st.session_state["merma_op_exito"] = True
+                                st.rerun()
+
+            with col_volver:
+                if st.button("✏️  Editar cabecera", use_container_width=True):
+                    st.session_state["merma_op_paso"] = 1
+                    st.rerun()
+
+            with col_can:
+                if st.button("🗑️  Cancelar", use_container_width=True):
+                    reset_merma_op()
+                    st.rerun()
+
+    # ── Mensaje de éxito ──────────────────────────────────────────────────────
+    if st.session_state.get("merma_op_exito") and st.session_state["merma_op_paso"] == 1:
+        st.session_state["merma_op_exito"] = False
+        st.success("✅ Salida de merma registrada correctamente. El stock ha sido actualizado.")
