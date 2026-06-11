@@ -231,6 +231,21 @@ def get_client():
 
     return gspread.authorize(creds)
 
+def _parse_fecha_robusta(serie: pd.Series) -> pd.Series:
+    """Parser de fechas que maneja DD/MM/YYYY, YYYY-MM-DD y variantes."""
+    s = serie.astype(str).str.strip()
+    parsed = pd.Series(pd.NaT, index=s.index)
+    pendientes = s.ne("") & s.ne("nan") & s.ne("NaT") & s.ne("None")
+    for fmt in ["%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%Y-%m-%d %H:%M:%S", "%d-%m-%Y"]:
+        mask = pendientes & parsed.isna()
+        if not mask.any():
+            break
+        parsed[mask] = pd.to_datetime(s[mask], format=fmt, errors="coerce")
+    mask_final = pendientes & parsed.isna()
+    if mask_final.any():
+        parsed[mask_final] = pd.to_datetime(s[mask_final], dayfirst=True, errors="coerce")
+    return parsed
+
 @st.cache_data(ttl=300)
 def cargar_datos() -> pd.DataFrame:
 
@@ -248,37 +263,8 @@ def cargar_datos() -> pd.DataFrame:
         ws.get_all_records(value_render_option="FORMATTED_VALUE")
     )
 
-    def parse_fecha(col):
-        col = col.astype(str).str.strip()
-
-        # Intentar múltiples formatos en orden de prioridad
-        formatos = [
-            "%d/%m/%Y",    # 24/03/2026  — formato principal de la sheet
-            "%d/%m/%y",    # 24/03/26    — año corto
-            "%Y-%m-%d",    # 2026-03-24  — ISO (filas insertadas por el sistema)
-            "%d-%m-%Y",    # 24-03-2026
-        ]
-
-        parsed = pd.Series(pd.NaT, index=col.index)
-        pendientes = col.ne("") & col.ne("nan") & col.ne("NaT") & col.ne("None")
-
-        for fmt in formatos:
-            mask = pendientes & parsed.isna()
-            if not mask.any():
-                break
-            parsed[mask] = pd.to_datetime(col[mask], format=fmt, errors="coerce")
-
-        # Último intento: parser automático con dayfirst=True
-        mask_final = pendientes & parsed.isna()
-        if mask_final.any():
-            parsed[mask_final] = pd.to_datetime(
-                col[mask_final], dayfirst=True, errors="coerce"
-            )
-
-        return parsed
-
-    df["FECHA"] = parse_fecha(df["FECHA"].astype(str))
-    df["FECHA VCTO"] = parse_fecha(df["FECHA VCTO"].astype(str))
+    df["FECHA"]      = _parse_fecha_robusta(df["FECHA"].astype(str))
+    df["FECHA VCTO"] = _parse_fecha_robusta(df["FECHA VCTO"].astype(str))
 
     df["TOTAL UNIT"] = pd.to_numeric(
         df["TOTAL UNIT"], errors="coerce"
@@ -430,7 +416,7 @@ def formatear_fechas_excel(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in df.columns:
         if "FECHA" in col.upper() or "VENCIMIENTO" in col.upper() or "INGRESO" in col.upper():
-            converted = pd.to_datetime(df[col], dayfirst=True, errors="coerce")
+            converted = _parse_fecha_robusta(df[col])
             if converted.notna().any():
                 df[col] = converted.dt.strftime("%d/%m/%Y").fillna(df[col].astype(str))
     return df
@@ -1514,13 +1500,11 @@ elif vista == "🔍  Trazabilidad":
     traz_display = traz.copy()
 
     for col in traz_display.columns:
-
         if "FECHA" in col.upper():
-
             try:
-                traz_display[col] = pd.to_datetime(
-                    traz_display[col], errors="coerce"
-                ).dt.strftime("%Y-%m-%d")
+                traz_display[col] = _parse_fecha_robusta(
+                    traz_display[col].astype(str)
+                ).dt.strftime("%d/%m/%Y").fillna("")
             except:
                 pass
 
@@ -1676,8 +1660,8 @@ elif vista == "🚚  Despachos":
     for col in desp_display.columns:
         if "FECHA" in col.upper():
             try:
-                desp_display[col] = pd.to_datetime(
-                    desp_display[col], errors="coerce"
+                desp_display[col] = _parse_fecha_robusta(
+                    desp_display[col].astype(str)
                 ).dt.strftime("%d/%m/%Y").fillna("")
             except:
                 pass
