@@ -384,8 +384,41 @@ def calcular_stock(
 
     result = pd.concat([result_general, result_resto], ignore_index=True)
 
-    result = result[result["Stock"] > 0].copy()
+    # ─────────────────────────────────────────────
+    # PASO 4: Compensar grupos negativos
+    # Cuando un grupo SKU+CTN+ESTADO+VCTO queda
+    # negativo (salidas registradas con fecha vcto
+    # distinta al ingreso), redistribuir ese déficit
+    # contra los grupos positivos del mismo
+    # SKU+CTN+ESTADO, empezando por el de mayor stock.
+    # ─────────────────────────────────────────────
 
+    grupos_neg = result[result["Stock"] < 0].copy()
+
+    if not grupos_neg.empty:
+        result = result.copy()
+        for _, neg_row in grupos_neg.iterrows():
+            deficit = abs(int(neg_row["Stock"]))
+            # Grupos positivos del mismo SKU+CTN+ESTADO
+            mask_pos = (
+                (result["SKU MASEF"] == neg_row["SKU MASEF"]) &
+                (result["CTN"]       == neg_row["CTN"]) &
+                (result["ESTADO"]    == neg_row["ESTADO"]) &
+                (result["Stock"]     >  0)
+            )
+            positivos_idx = result[mask_pos].sort_values("Stock", ascending=False).index
+            # Descontar el déficit de los grupos positivos en orden
+            for idx in positivos_idx:
+                if deficit <= 0:
+                    break
+                disponible = int(result.at[idx, "Stock"])
+                descuento  = min(disponible, deficit)
+                result.at[idx, "Stock"] = disponible - descuento
+                deficit -= descuento
+            # Eliminar la fila negativa ya compensada
+            result = result.drop(neg_row.name)
+
+    result = result[result["Stock"] > 0].copy()
     result["Stock"] = result["Stock"].astype(int)
 
     # ─────────────────────────────────────────────
