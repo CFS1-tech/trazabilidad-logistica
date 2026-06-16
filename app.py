@@ -806,6 +806,21 @@ def _build_pk_aux(cols_extra: list) -> pd.DataFrame:
     return aux.drop_duplicates(subset=["CTN", "SKU MASEF"])
 
 
+def _aplicar_presentacion_por_estado(df_merged: pd.DataFrame) -> pd.DataFrame:
+    """Aplica valores fijos de CASE PACK IN según el ESTADO:
+       - BANDEJAS MIXTAS → 1
+       - BANDEJAS        → 24
+       Los demás estados mantienen el valor del packing list.
+    """
+    if "CASE PACK IN" not in df_merged.columns or "ESTADO" not in df_merged.columns:
+        return df_merged
+    estado = df_merged["ESTADO"].astype(str).str.strip().str.upper()
+    df_merged = df_merged.copy()
+    df_merged.loc[estado == "BANDEJAS MIXTAS", "CASE PACK IN"] = 1
+    df_merged.loc[estado == "BANDEJAS",        "CASE PACK IN"] = 24
+    return df_merged
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: DASHBOARD
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1336,6 +1351,7 @@ elif vista == "📦  Stock":
         )
 
     stock_df = stock_df.merge(pk_presentacion, on=["CTN", "SKU MASEF"], how="left")
+    stock_df = _aplicar_presentacion_por_estado(stock_df)
 
     # ── Filtro Proveedor ──
     if f_prov_stock != "Todos" and col_proveedor_pk and col_proveedor_pk in stock_df.columns:
@@ -1525,6 +1541,7 @@ elif vista == "🔍  Trazabilidad":
     traz["SKU MASEF"] = traz["SKU MASEF"].astype(str).str.strip()
 
     traz = traz.merge(pk_pres_traz, on=["CTN", "SKU MASEF"], how="left")
+    traz = _aplicar_presentacion_por_estado(traz)
 
     # ── Filtro Proveedor ──
     if f_prov_traz != "Todos" and col_proveedor_pk and col_proveedor_pk in traz.columns:
@@ -1674,6 +1691,7 @@ elif vista == "🚚  Despachos":
     desp["SKU MASEF"] = desp["SKU MASEF"].astype(str).str.strip()
 
     desp = desp.merge(pk_pres_desp, on=["CTN", "SKU MASEF"], how="left")
+    desp = _aplicar_presentacion_por_estado(desp)
 
     # ── Filtro Proveedor ──
     if f_prov_desp != "Todos" and col_proveedor_pk and col_proveedor_pk in desp.columns:
@@ -2118,6 +2136,7 @@ elif vista == "🛒  Despacho Operativo":
         stock_op["CTN"]       = stock_op["CTN"].astype(str).str.strip()
         stock_op["SKU MASEF"] = stock_op["SKU MASEF"].astype(str).str.strip()
         stock_op = stock_op.merge(pk_op, on=["CTN", "SKU MASEF"], how="left")
+        stock_op = _aplicar_presentacion_por_estado(stock_op)
 
         # ── Buscador ──────────────────────────────────────────────────────────
         st.markdown(
