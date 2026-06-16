@@ -809,15 +809,21 @@ def _build_pk_aux(cols_extra: list) -> pd.DataFrame:
 def _aplicar_presentacion_por_estado(df_merged: pd.DataFrame) -> pd.DataFrame:
     """Aplica valores fijos de CASE PACK IN según el ESTADO:
        - BANDEJAS MIXTAS → 1
+       - LATAS SUELTAS   → 1
        - BANDEJAS        → 24
        Los demás estados mantienen el valor del packing list.
     """
-    if "CASE PACK IN" not in df_merged.columns or "ESTADO" not in df_merged.columns:
+    if "ESTADO" not in df_merged.columns:
         return df_merged
-    estado = df_merged["ESTADO"].astype(str).str.strip().str.upper()
     df_merged = df_merged.copy()
-    df_merged.loc[estado == "BANDEJAS MIXTAS", "CASE PACK IN"] = 1
-    df_merged.loc[estado == "BANDEJAS",        "CASE PACK IN"] = 24
+    # Asegurar que CASE PACK IN existe y es float para poder asignar sin conflicto de dtype
+    if "CASE PACK IN" not in df_merged.columns:
+        df_merged["CASE PACK IN"] = float("nan")
+    df_merged["CASE PACK IN"] = pd.to_numeric(df_merged["CASE PACK IN"], errors="coerce").astype(float)
+    estado = df_merged["ESTADO"].astype(str).str.strip().str.upper()
+    df_merged.loc[estado == "BANDEJAS MIXTAS", "CASE PACK IN"] = 1.0
+    df_merged.loc[estado == "LATAS SUELTAS",   "CASE PACK IN"] = 1.0
+    df_merged.loc[estado == "BANDEJAS",        "CASE PACK IN"] = 24.0
     return df_merged
 
 
