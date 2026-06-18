@@ -231,6 +231,24 @@ def get_client():
 
     return gspread.authorize(creds)
 
+
+def _con_reintentos(fn, max_intentos: int = 5, espera_base: float = 2.0):
+    """Ejecuta fn() con reintentos exponenciales ante errores 429/500/503."""
+    import time, random
+    ultimo_error = None
+    for intento in range(max_intentos):
+        try:
+            return fn()
+        except Exception as e:
+            msg = str(e)
+            if any(cod in msg for cod in ("503", "500", "429", "502", "504")):
+                ultimo_error = e
+                espera = espera_base * (2 ** intento) + random.uniform(0, 1)
+                time.sleep(espera)
+            else:
+                raise
+    raise ultimo_error
+
 def _parse_fecha_robusta(serie: pd.Series) -> pd.Series:
     """Parser de fechas que maneja DD/MM/YYYY, YYYY-MM-DD y variantes."""
     s = serie.astype(str).str.strip()
@@ -249,19 +267,13 @@ def _parse_fecha_robusta(serie: pd.Series) -> pd.Series:
 @st.cache_data(ttl=300)
 def cargar_datos() -> pd.DataFrame:
 
-    client = get_client()
+    def _cargar():
+        client = get_client()
+        sh = client.open_by_key(st.secrets["spreadsheet_id"])
+        ws = sh.worksheet(SHEET_NAME)
+        return pd.DataFrame(ws.get_all_records(value_render_option="FORMATTED_VALUE"))
 
-    sh = client.open_by_key(
-        st.secrets["spreadsheet_id"]
-    )
-
-    ws = sh.worksheet(SHEET_NAME)
-
-    # FORMATTED_VALUE trae los valores tal como se ven en pantalla
-    # evitando que gspread devuelva números seriales para las fechas
-    df = pd.DataFrame(
-        ws.get_all_records(value_render_option="FORMATTED_VALUE")
-    )
+    df = _con_reintentos(_cargar)
 
     df["FECHA"]      = _parse_fecha_robusta(df["FECHA"].astype(str))
     df["FECHA VCTO"] = _parse_fecha_robusta(df["FECHA VCTO"].astype(str))
@@ -278,19 +290,13 @@ def cargar_datos() -> pd.DataFrame:
 @st.cache_data(ttl=300)
 def cargar_packinglist() -> pd.DataFrame:
 
-    client = get_client()
+    def _cargar():
+        client = get_client()
+        sh = client.open_by_key(st.secrets["spreadsheet_id"])
+        ws = sh.worksheet("PACKINGLIST")
+        return pd.DataFrame(ws.get_all_records())
 
-    sh = client.open_by_key(
-        st.secrets["spreadsheet_id"]
-    )
-
-    ws = sh.worksheet("PACKINGLIST")
-
-    df_pk = pd.DataFrame(
-        ws.get_all_records()
-    )
-
-    return df_pk
+    return _con_reintentos(_cargar)
 
 
 def calcular_stock(
@@ -577,7 +583,7 @@ ROL = st.session_state["rol"]
 
 VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "⚠️  Salida de Merma"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "🔀  Cambio de Estado Stock", "⚠️  Salida de Merma"]
 
 reportes_opts    = VISTAS_REPORTES_ADMIN if ROL in ("administrador", "operario") else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
@@ -774,11 +780,15 @@ try:
     packing_df = cargar_packinglist()
 
 except Exception as e:
-
-    st.error(
-        f"❌ Error conectando a Google Sheets: {e}"
-    )
-
+    msg = str(e)
+    if any(cod in msg for cod in ("503", "500", "429", "502", "504")):
+        st.error(
+            "⚠️ Google Sheets no está disponible en este momento (error de servidor). "
+            "Se intentó conectar 5 veces sin éxito. "
+            "Por favor espera unos segundos y recarga la página (F5)."
+        )
+    else:
+        st.error(f"❌ Error conectando a Google Sheets: {e}")
     st.stop()
 
 # ── Columnas clave del packing list (detección global) ───────────────────────
@@ -2673,6 +2683,313 @@ elif vista == "🔄  Cambio de Estado CTN":
         if st.session_state.get("estado_ctn_ok"):
             st.session_state["estado_ctn_ok"] = False
             st.success(f"✅ CTN {f_ctn_sel} marcado como REVISADO correctamente.")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: CAMBIO DE ESTADO STOCK
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "🔀  Cambio de Estado Stock":
+
+    if ROL != "administrador":
+        st.error("❌ Solo administradores pueden acceder a este módulo.")
+        st.stop()
+
+    st.markdown("""
+    <div class="wms-header">
+      <div style="font-size:32px">🔀</div>
+      <div>
+        <h1>Cambio de Estado — Stock</h1>
+        <p>Mueve unidades de un estado a otro generando movimientos de ajuste</p>
+      </div>
+      <span class="wms-badge">Admin</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Inicializar session state ──────────────────────────────────────────────
+    for _k, _v in [
+        ("ce_paso",        1),
+        ("ce_fecha",       date.today()),
+        ("ce_sku_sel",     None),
+        ("ce_registro",    None),   # fila del stock seleccionada
+        ("ce_estado_dest", None),
+        ("ce_cantidad",    0),
+        ("ce_exito",       False),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    def reset_ce():
+        st.session_state["ce_paso"]        = 1
+        st.session_state["ce_fecha"]       = date.today()
+        st.session_state["ce_sku_sel"]     = None
+        st.session_state["ce_registro"]    = None
+        st.session_state["ce_estado_dest"] = None
+        st.session_state["ce_cantidad"]    = 0
+        st.session_state["ce_exito"]       = False
+
+    # ── Calcular stock completo (incluyendo merma) ─────────────────────────────
+    stock_ce = calcular_stock(df, fecha_corte=date.today(), excluir_tipos=None)
+
+    if stock_ce.empty:
+        st.info("No hay stock registrado.")
+        st.stop()
+
+    # ── PASO 1: Seleccionar SKU y fecha de registro ────────────────────────────
+    if st.session_state["ce_paso"] == 1:
+
+        st.markdown("""
+        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
+          <b>Paso 1 de 3</b> — Selecciona la fecha de registro y el SKU a modificar.
+        </div>
+        """, unsafe_allow_html=True)
+
+        skus_disp = sorted(stock_ce["SKU MASEF"].unique().tolist())
+        sku_labels = {
+            s: f"{s} — {stock_ce[stock_ce['SKU MASEF']==s]['DESCRIPTION'].iloc[0]}"
+            for s in skus_disp
+        }
+
+        with st.form("ce_form_paso1"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_fecha_ce = st.date_input("📅 Fecha del ajuste", value=st.session_state["ce_fecha"])
+            with c2:
+                inp_sku = st.selectbox(
+                    "🔍 SKU",
+                    options=skus_disp,
+                    format_func=lambda s: sku_labels[s],
+                    index=skus_disp.index(st.session_state["ce_sku_sel"]) if st.session_state["ce_sku_sel"] in skus_disp else 0
+                )
+            st.form_submit_button("➡️  Ver registros de stock", use_container_width=True)
+
+        st.session_state["ce_fecha"]   = inp_fecha_ce
+        st.session_state["ce_sku_sel"] = inp_sku
+
+        # ── Mostrar stock del SKU seleccionado ────────────────────────────────
+        st.divider()
+        st.markdown(
+            f"<div style='font-size:11px;font-weight:700;color:#64748b;"
+            f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+            f"📦 Stock actual — {inp_sku}</div>",
+            unsafe_allow_html=True
+        )
+
+        df_sku = stock_ce[stock_ce["SKU MASEF"] == inp_sku][
+            ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO", "Stock"]
+        ].reset_index(drop=True)
+
+        if df_sku.empty:
+            st.info("No hay stock para este SKU.")
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#64748b;margin-bottom:6px'>"
+                "Haz clic en <b>Seleccionar</b> en la fila que quieres modificar.</div>",
+                unsafe_allow_html=True
+            )
+            for i, row in df_sku.iterrows():
+                col_info, col_btn = st.columns([5, 1])
+                with col_info:
+                    fv = row["FECHA VCTO"] if row["FECHA VCTO"] else "—"
+                    st.markdown(
+                        f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
+                        f"padding:10px 14px;font-size:13px;line-height:1.6'>"
+                        f"<b>CTN:</b> {row['CTN']} &nbsp;|&nbsp; "
+                        f"<b>Estado:</b> <span style='color:#185FA5;font-weight:600'>{row['ESTADO']}</span>"
+                        f" &nbsp;|&nbsp; <b>FV:</b> {fv}"
+                        f" &nbsp;|&nbsp; <b>Stock:</b> <span style='color:#059669;font-weight:700'>{row['Stock']:,}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                with col_btn:
+                    if st.button("Seleccionar", key=f"ce_sel_{i}", use_container_width=True):
+                        st.session_state["ce_registro"] = row.to_dict()
+                        st.session_state["ce_paso"]     = 2
+                        st.rerun()
+
+    # ── PASO 2: Elegir estado destino y cantidad ───────────────────────────────
+    elif st.session_state["ce_paso"] == 2:
+
+        reg   = st.session_state["ce_registro"]
+        fv    = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
+
+        st.markdown("""
+        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
+          <b>Paso 2 de 3</b> — Define el estado destino y la cantidad a mover.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Banner resumen del registro origen
+        st.markdown(
+            f"<div style='background:#0d1b2a;color:white;border-radius:10px;"
+            f"padding:14px 20px;margin-bottom:16px;font-size:13px;line-height:1.8'>"
+            f"<b>SKU:</b> {reg['SKU MASEF']} — {reg['DESCRIPTION']}<br>"
+            f"<b>CTN:</b> {reg['CTN']} &nbsp;|&nbsp; "
+            f"<b>Estado origen:</b> <span style='color:#93c5fd'>{reg['ESTADO']}</span> &nbsp;|&nbsp; "
+            f"<b>FV:</b> {fv} &nbsp;|&nbsp; "
+            f"<b>Stock disponible:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        # Estados disponibles (todos excepto el actual)
+        estados_posibles = [
+            "DISTRIBUIDOR", "DISPONIBLE", "BANDEJAS", "BANDEJAS MIXTAS",
+            "LATAS SUELTAS", "DEVOLUCION", "MERMA", "GENERAL"
+        ]
+        estados_dest = [e for e in estados_posibles if e != reg["ESTADO"]]
+
+        with st.form("ce_form_paso2"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_estado_dest = st.selectbox("🏷️ Estado destino", estados_dest)
+            with c2:
+                inp_cantidad = st.number_input(
+                    "📦 Cantidad a mover",
+                    min_value=1,
+                    max_value=int(reg["Stock"]),
+                    value=min(1, int(reg["Stock"])),
+                    step=1
+                )
+            c3, c4 = st.columns(2)
+            with c3:
+                btn_continuar = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
+            with c4:
+                btn_volver = st.form_submit_button("⬅️  Volver", use_container_width=True)
+
+        if btn_volver:
+            st.session_state["ce_paso"] = 1
+            st.rerun()
+
+        if btn_continuar:
+            st.session_state["ce_estado_dest"] = inp_estado_dest
+            st.session_state["ce_cantidad"]    = int(inp_cantidad)
+            st.session_state["ce_paso"]        = 3
+            st.rerun()
+
+    # ── PASO 3: Confirmación y escritura ──────────────────────────────────────
+    elif st.session_state["ce_paso"] == 3:
+
+        reg          = st.session_state["ce_registro"]
+        estado_dest  = st.session_state["ce_estado_dest"]
+        cantidad     = st.session_state["ce_cantidad"]
+        fecha_reg    = st.session_state["ce_fecha"].strftime("%d/%m/%Y")
+        fv           = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
+
+        st.markdown("""
+        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
+          <b>Paso 3 de 3</b> — Revisa el resumen y confirma el cambio.
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Resumen visual
+        c_orig, c_arrow, c_dest = st.columns([2, 1, 2])
+        with c_orig:
+            st.markdown(
+                f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;"
+                f"padding:16px;text-align:center'>"
+                f"<div style='font-size:11px;color:#dc2626;font-weight:700;text-transform:uppercase;"
+                f"letter-spacing:.08em;margin-bottom:6px'>AJUSTE OUT</div>"
+                f"<div style='font-size:22px;font-weight:700;color:#dc2626'>−{cantidad:,}</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                f"Estado: <b>{reg['ESTADO']}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+        with c_arrow:
+            st.markdown(
+                "<div style='display:flex;align-items:center;justify-content:center;"
+                "height:100%;font-size:32px'>→</div>",
+                unsafe_allow_html=True
+            )
+        with c_dest:
+            st.markdown(
+                f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:10px;"
+                f"padding:16px;text-align:center'>"
+                f"<div style='font-size:11px;color:#16a34a;font-weight:700;text-transform:uppercase;"
+                f"letter-spacing:.08em;margin-bottom:6px'>AJUSTE IN</div>"
+                f"<div style='font-size:22px;font-weight:700;color:#16a34a'>+{cantidad:,}</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                f"Estado: <b>{estado_dest}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div>"
+                f"</div>",
+                unsafe_allow_html=True
+            )
+
+        st.markdown(
+            f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
+            f"padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px;margin-bottom:16px'>"
+            f"📅 Fecha: <b>{fecha_reg}</b> &nbsp;|&nbsp; "
+            f"SKU: <b>{reg['SKU MASEF']}</b> — {reg['DESCRIPTION']}"
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+        col_ok, col_back = st.columns(2)
+
+        with col_back:
+            if st.button("⬅️  Volver", use_container_width=True):
+                st.session_state["ce_paso"] = 2
+                st.rerun()
+
+        with col_ok:
+            if st.button("✅  Confirmar cambio de estado", use_container_width=True, type="primary"):
+
+                obs_out = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
+                obs_in  = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
+
+                # Columnas: FECHA, SKU MASEF, DESCRIPTION, CTN, ESTADO, FECHA VCTO,
+                #           TOTAL UNIT, GUIA, TIPO DE MOVIMIENTO, Tienda, OBS
+                fila_out = [
+                    fecha_reg,
+                    reg["SKU MASEF"],
+                    reg["DESCRIPTION"],
+                    reg["CTN"],
+                    reg["ESTADO"],
+                    fv,
+                    -cantidad,
+                    "",
+                    "AJUSTE",
+                    "",
+                    obs_out,
+                ]
+                fila_in = [
+                    fecha_reg,
+                    reg["SKU MASEF"],
+                    reg["DESCRIPTION"],
+                    reg["CTN"],
+                    estado_dest,
+                    fv,
+                    cantidad,
+                    "",
+                    "AJUSTE",
+                    "",
+                    obs_in,
+                ]
+
+                try:
+                    client_ce = get_client()
+                    sh_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"])
+                    ws_ce     = sh_ce.worksheet(SHEET_NAME)
+                    ws_ce.append_rows([fila_out, fila_in], value_input_option="USER_ENTERED")
+                    st.cache_data.clear()
+                    st.session_state["ce_exito"] = True
+                    reset_ce()
+                    st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar en Google Sheets: {e}")
+
+        if st.session_state.get("ce_exito"):
+            st.session_state["ce_exito"] = False
+
+    # ── Banner de éxito ────────────────────────────────────────────────────────
+    if st.session_state.get("ce_exito"):
+        st.success("✅ Cambio de estado registrado correctamente.")
+        if st.button("🔀  Hacer otro cambio", use_container_width=True):
+            reset_ce()
+            st.rerun()
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: SALIDA DE MERMA
