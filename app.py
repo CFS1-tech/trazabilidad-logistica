@@ -2843,14 +2843,15 @@ elif vista == "🔀  Cambio de Estado Stock":
         with st.form("ce_form_paso2"):
             c1, c2 = st.columns(2)
             with c1:
-                inp_estado_dest = st.selectbox("🏷️ Estado destino", estados_dest)
+                inp_estado_dest = st.selectbox("🏷️ Estado destino", estados_dest, key="ce_inp_estado_dest")
             with c2:
                 inp_cantidad = st.number_input(
                     "📦 Cantidad a mover",
                     min_value=1,
                     max_value=int(reg["Stock"]),
-                    value=min(1, int(reg["Stock"])),
-                    step=1
+                    value=int(reg["Stock"]),
+                    step=1,
+                    key="ce_inp_cantidad"
                 )
             c3, c4 = st.columns(2)
             with c3:
@@ -2863,8 +2864,8 @@ elif vista == "🔀  Cambio de Estado Stock":
             st.rerun()
 
         if btn_continuar:
-            st.session_state["ce_estado_dest"] = inp_estado_dest
-            st.session_state["ce_cantidad"]    = int(inp_cantidad)
+            st.session_state["ce_estado_dest"] = st.session_state["ce_inp_estado_dest"]
+            st.session_state["ce_cantidad"]    = int(st.session_state["ce_inp_cantidad"])
             st.session_state["ce_paso"]        = 3
             st.rerun()
 
