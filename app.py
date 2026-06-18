@@ -2710,6 +2710,7 @@ elif vista == "🔀  Cambio de Estado Stock":
         ("ce_paso",        1),
         ("ce_fecha",       date.today()),
         ("ce_sku_sel",     None),
+        ("ce_df_sku_snap", []),
         ("ce_registro",    None),   # fila del stock seleccionada
         ("ce_estado_dest", None),
         ("ce_cantidad",    0),
@@ -2722,6 +2723,7 @@ elif vista == "🔀  Cambio de Estado Stock":
         st.session_state["ce_paso"]        = 1
         st.session_state["ce_fecha"]       = date.today()
         st.session_state["ce_sku_sel"]     = None
+        st.session_state["ce_df_sku_snap"] = []
         st.session_state["ce_registro"]    = None
         st.session_state["ce_estado_dest"] = None
         st.session_state["ce_cantidad"]    = 0
@@ -2750,21 +2752,26 @@ elif vista == "🔀  Cambio de Estado Stock":
             for s in skus_disp
         }
 
-        with st.form("ce_form_paso1"):
-            c1, c2 = st.columns(2)
-            with c1:
-                inp_fecha_ce = st.date_input("📅 Fecha del ajuste", value=st.session_state["ce_fecha"])
-            with c2:
-                inp_sku = st.selectbox(
-                    "🔍 SKU",
-                    options=skus_disp,
-                    format_func=lambda s: sku_labels[s],
-                    index=skus_disp.index(st.session_state["ce_sku_sel"]) if st.session_state["ce_sku_sel"] in skus_disp else 0
-                )
-            st.form_submit_button("➡️  Ver registros de stock", use_container_width=True)
+        c1, c2 = st.columns(2)
+        with c1:
+            inp_fecha_ce = st.date_input("📅 Fecha del ajuste", value=st.session_state["ce_fecha"], key="ce_inp_fecha")
+        with c2:
+            inp_sku = st.selectbox(
+                "🔍 SKU",
+                options=skus_disp,
+                format_func=lambda s: sku_labels[s],
+                index=skus_disp.index(st.session_state["ce_sku_sel"]) if st.session_state["ce_sku_sel"] in skus_disp else 0,
+                key="ce_inp_sku"
+            )
 
         st.session_state["ce_fecha"]   = inp_fecha_ce
         st.session_state["ce_sku_sel"] = inp_sku
+
+        # Guardar snapshot del stock del SKU actual para que los botones lo usen
+        df_sku_snap = stock_ce[stock_ce["SKU MASEF"] == inp_sku][
+            ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO", "Stock"]
+        ].reset_index(drop=True)
+        st.session_state["ce_df_sku_snap"] = df_sku_snap.to_dict("records")
 
         # ── Mostrar stock del SKU seleccionado ────────────────────────────────
         st.divider()
@@ -2775,11 +2782,9 @@ elif vista == "🔀  Cambio de Estado Stock":
             unsafe_allow_html=True
         )
 
-        df_sku = stock_ce[stock_ce["SKU MASEF"] == inp_sku][
-            ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO", "Stock"]
-        ].reset_index(drop=True)
+        registros_snap = st.session_state.get("ce_df_sku_snap", [])
 
-        if df_sku.empty:
+        if not registros_snap:
             st.info("No hay stock para este SKU.")
         else:
             st.markdown(
@@ -2787,7 +2792,7 @@ elif vista == "🔀  Cambio de Estado Stock":
                 "Haz clic en <b>Seleccionar</b> en la fila que quieres modificar.</div>",
                 unsafe_allow_html=True
             )
-            for i, row in df_sku.iterrows():
+            for i, row in enumerate(registros_snap):
                 col_info, col_btn = st.columns([5, 1])
                 with col_info:
                     fv = row["FECHA VCTO"] if row["FECHA VCTO"] else "—"
@@ -2803,7 +2808,7 @@ elif vista == "🔀  Cambio de Estado Stock":
                     )
                 with col_btn:
                     if st.button("Seleccionar", key=f"ce_sel_{i}", use_container_width=True):
-                        st.session_state["ce_registro"] = row.to_dict()
+                        st.session_state["ce_registro"] = registros_snap[i]
                         st.session_state["ce_paso"]     = 2
                         st.rerun()
 
