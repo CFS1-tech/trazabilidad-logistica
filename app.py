@@ -820,6 +820,7 @@ def _aplicar_presentacion_por_estado(df_merged: pd.DataFrame) -> pd.DataFrame:
     """Aplica valores fijos de CASE PACK IN según el ESTADO:
        - BANDEJAS MIXTAS → 1
        - LATAS SUELTAS   → 1
+       - MERMA           → 1
        - BANDEJAS        → 24
        Los demás estados mantienen el valor del packing list.
     """
@@ -833,6 +834,7 @@ def _aplicar_presentacion_por_estado(df_merged: pd.DataFrame) -> pd.DataFrame:
     estado = df_merged["ESTADO"].astype(str).str.strip().str.upper()
     df_merged.loc[estado == "BANDEJAS MIXTAS", "CASE PACK IN"] = 1.0
     df_merged.loc[estado == "LATAS SUELTAS",   "CASE PACK IN"] = 1.0
+    df_merged.loc[estado == "MERMA",           "CASE PACK IN"] = 1.0
     df_merged.loc[estado == "BANDEJAS",        "CASE PACK IN"] = 24.0
     return df_merged
 
