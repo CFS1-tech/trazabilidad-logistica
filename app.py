@@ -581,7 +581,7 @@ if not st.session_state["autenticado"]:
 
 ROL = st.session_state["rol"]
 
-VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma"]
+VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
 VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "🔀  Cambio de Estado Stock", "⚠️  Salida de Merma"]
 
@@ -1412,6 +1412,179 @@ elif vista == "📦  Stock":
     )
 
     botones_descarga(display, "stock")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: STOCK CON MERMA (solo admin)
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "🔴  Stock con Merma":
+
+    if ROL != "administrador":
+        st.error("❌ Solo administradores pueden acceder a este módulo.")
+        st.stop()
+
+    st.markdown("""
+    <div class="wms-header">
+      <div style="font-size:32px">🔴</div>
+      <div>
+        <h1>Stock con Merma</h1>
+        <p>Visión completa del stock incluyendo unidades en estado MERMA</p>
+      </div>
+      <span class="wms-badge" style="background:#dc2626">Admin</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Filtro Proveedor ──────────────────────────────────────────────────────
+    if col_proveedor_pk:
+        provs_sm_opts = ["Todos"] + sorted(
+            packing_df[col_proveedor_pk].dropna().astype(str).str.strip().unique().tolist()
+        )
+        f_prov_sm = st.selectbox("🏭 Proveedor", provs_sm_opts, key="prov_stock_merma")
+    else:
+        f_prov_sm = "Todos"
+
+    if f_prov_sm != "Todos" and col_proveedor_pk:
+        ctns_del_prov_sm = (
+            packing_df[packing_df[col_proveedor_pk].astype(str).str.strip() == f_prov_sm]
+            [col_ctn_pk].astype(str).str.strip().unique().tolist()
+        )
+        ctns_opts_sm = ["Todos"] + sorted(
+            c for c in df["CTN"].dropna().astype(str).unique() if c in ctns_del_prov_sm
+        )
+    else:
+        ctns_opts_sm = ["Todos"] + sorted(df["CTN"].dropna().astype(str).unique().tolist())
+
+    # ── Filtros ───────────────────────────────────────────────────────────────
+    with st.form("form_stock_merma"):
+        c1, c2, c3, c4 = st.columns([2, 2, 2, 2])
+        with c1:
+            fecha_corte_sm = st.date_input(
+                "📅 Fecha de corte",
+                value=date.today(),
+                min_value=df["FECHA"].min().date(),
+                max_value=date.today(),
+                key="fc_sm"
+            )
+        with c2:
+            buscar_sm = st.text_input("🔎 Buscar SKU o descripción", placeholder="ej: NUTELLA", key="buscar_sm")
+        with c3:
+            estados_sm_opts = ["Todos"] + sorted(df["ESTADO"].dropna().unique().tolist())
+            f_estado_sm = st.selectbox("🏷️ Estado", estados_sm_opts, key="estado_sm")
+        with c4:
+            f_ctn_sm = st.selectbox("📦 Contenedor", ctns_opts_sm, key="ctn_sm")
+        st.form_submit_button("🔍 Buscar", use_container_width=True)
+
+    # ── Métricas globales (incluye MERMA) ─────────────────────────────────────
+    sub_sm = df[df["FECHA"].dt.date <= fecha_corte_sm].copy()
+
+    # Neto por SKU con merma incluida
+    neto_sm = sub_sm.groupby("SKU MASEF")["TOTAL UNIT"].sum()
+    total_sm = int(neto_sm[neto_sm > 0].sum())
+
+    # Métricas por estado (incluyendo MERMA)
+    skus_pos_sm = neto_sm[neto_sm > 0].index
+    por_estado_sm = (
+        sub_sm[sub_sm["SKU MASEF"].isin(skus_pos_sm)]
+        .groupby("ESTADO")["TOTAL UNIT"].sum()
+    )
+    por_estado_sm = por_estado_sm[por_estado_sm > 0].sort_values(ascending=False)
+
+    cols_m = st.columns(1 + len(por_estado_sm))
+    cols_m[0].metric("Total en stock (con merma)", f"{total_sm:,}")
+    for i, (estado, unidades) in enumerate(por_estado_sm.items()):
+        color_label = f"🔴 {estado}" if estado == "MERMA" else estado
+        cols_m[1 + i].metric(color_label, f"{int(unidades):,}")
+
+    # Métrica específica de merma
+    total_merma = int(por_estado_sm.get("MERMA", 0))
+    if total_merma > 0:
+        st.markdown(
+            f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;"
+            f"padding:10px 16px;font-size:13px;color:#dc2626;margin:8px 0'>"
+            f"🔴 <b>Unidades en MERMA: {total_merma:,}</b> — estas unidades están deterioradas o destruidas."
+            f"</div>",
+            unsafe_allow_html=True
+        )
+
+    st.divider()
+
+    # ── Calcular stock incluyendo MERMA ───────────────────────────────────────
+    stock_sm = calcular_stock(df, fecha_corte_sm, excluir_tipos=None)
+
+    # ── Filtros de búsqueda ───────────────────────────────────────────────────
+    if buscar_sm:
+        mask = (
+            stock_sm["SKU MASEF"].str.contains(buscar_sm, case=False, na=False)
+            | stock_sm["DESCRIPTION"].str.contains(buscar_sm, case=False, na=False)
+        )
+        stock_sm = stock_sm[mask]
+
+    if f_estado_sm != "Todos":
+        stock_sm = stock_sm[stock_sm["ESTADO"] == f_estado_sm]
+
+    if f_ctn_sm != "Todos":
+        stock_sm = stock_sm[stock_sm["CTN"] == f_ctn_sm]
+
+    # ── Merge packing list ────────────────────────────────────────────────────
+    pk_sm = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+    if "CASE PACK IN" in pk_sm.columns:
+        pk_sm["CASE PACK IN"] = pd.to_numeric(pk_sm["CASE PACK IN"], errors="coerce")
+    stock_sm = stock_sm.merge(pk_sm, on=["CTN", "SKU MASEF"], how="left")
+    stock_sm = _aplicar_presentacion_por_estado(stock_sm)
+
+    if f_prov_sm != "Todos" and col_proveedor_pk and col_proveedor_pk in stock_sm.columns:
+        stock_sm = stock_sm[stock_sm[col_proveedor_pk].astype(str).str.strip() == f_prov_sm]
+
+    # ── Tabla ─────────────────────────────────────────────────────────────────
+    st.markdown(
+        f"<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:8px'>"
+        f"<span style='font-size:13px;font-weight:700;color:#1e293b'>Detalle de stock (con merma)</span>"
+        f"<span style='background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;"
+        f"padding:3px 10px;border-radius:12px;border:1px solid #fca5a5'>{len(stock_sm)} registros</span>"
+        f"</div>",
+        unsafe_allow_html=True
+    )
+
+    cols_disp_sm = ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO"]
+    rename_sm = {
+        "SKU MASEF":   "SKU",
+        "DESCRIPTION": "Descripción",
+        "FECHA VCTO":  "Vencimiento",
+        "Stock":       "Unidades en Stock",
+    }
+    if col_proveedor_pk and col_proveedor_pk in stock_sm.columns:
+        cols_disp_sm.append(col_proveedor_pk)
+        rename_sm[col_proveedor_pk] = "Proveedor"
+    if "CASE PACK IN" in stock_sm.columns:
+        cols_disp_sm.append("CASE PACK IN")
+        rename_sm["CASE PACK IN"] = "Presentación"
+    cols_disp_sm.append("Stock")
+
+    display_sm = stock_sm[cols_disp_sm].rename(columns=rename_sm)
+    max_sm = int(stock_sm["Stock"].max()) if len(stock_sm) else 1
+
+    # Resaltar filas de merma con color
+    def highlight_merma(row):
+        if row.get("ESTADO", "") == "MERMA":
+            return ["background-color: #fef2f2; color: #dc2626"] * len(row)
+        return [""] * len(row)
+
+    st.dataframe(
+        display_sm,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Unidades en Stock": st.column_config.ProgressColumn(
+                "Unidades en Stock",
+                min_value=0,
+                max_value=max_sm,
+                format="%d"
+            )
+        }
+    )
+
+    botones_descarga(display_sm, "stock_con_merma")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: TRAZABILIDAD
