@@ -2051,7 +2051,24 @@ elif vista == "📦  Packing List":
 
     st.divider()
 
-    st.dataframe(pk, use_container_width=True, hide_index=True)
+    def _colorear_pk(df):
+        styles = pd.DataFrame('', index=df.index, columns=df.columns)
+        cols_pl  = [c for c in ["CASE QTY PL","CASE PACK PL","QTY PL"] if c in df.columns]
+        cols_in  = [c for c in ["CASE QTY IN","CASE PACK IN","QTY IN"] if c in df.columns]
+        cols_dif = [c for c in ["DIF CAJAS","DIF UNI"] if c in df.columns]
+        for c in cols_pl:
+            styles[c] = 'background-color:#dbeafe;color:#1e3a5f'   # azul pastel
+        for c in cols_in:
+            styles[c] = 'background-color:#dcfce7;color:#14532d'   # verde pastel
+        for c in cols_dif:
+            styles[c] = 'background-color:#fef9c3;color:#713f12'   # amarillo pastel
+        return styles
+
+    st.dataframe(
+        pk.style.apply(_colorear_pk, axis=None),
+        use_container_width=True,
+        hide_index=True
+    )
 
     botones_descarga(pk, "packinglist")
 
