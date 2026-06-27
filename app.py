@@ -2039,11 +2039,17 @@ elif vista == "📦  Packing List":
     if f_prov_pk != "Todos" and col_proveedor_pk and col_proveedor_pk in pk.columns:
         pk = pk[pk[col_proveedor_pk].astype(str).str.strip() == f_prov_pk]
 
-    # Detectar columna OBS y asegurarse que se muestre
-    col_obs_pk = next(
-        (c for c in pk.columns if c.upper() in ["OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"]),
-        None
-    )
+    # Ordenar de más reciente a más antiguo por FECH ING
+    col_fecha_pk = next((c for c in pk.columns if "FECH" in c.upper()), None)
+    if col_fecha_pk:
+        pk[col_fecha_pk] = pd.to_datetime(pk[col_fecha_pk], dayfirst=True, errors="coerce")
+        pk = pk.sort_values(col_fecha_pk, ascending=False)
+
+    # DIF UNI como entero (sin decimales)
+    if "DIF UNI" in pk.columns:
+        pk["DIF UNI"] = pd.to_numeric(pk["DIF UNI"], errors="coerce").fillna(0).astype(int)
+    if "DIF CAJAS" in pk.columns:
+        pk["DIF CAJAS"] = pd.to_numeric(pk["DIF CAJAS"], errors="coerce").fillna(0).astype(int)
 
     m1, m2 = st.columns(2)
     m1.metric("Registros", f"{len(pk):,}")
@@ -2057,15 +2063,17 @@ elif vista == "📦  Packing List":
         cols_in  = [c for c in ["CASE QTY IN","CASE PACK IN","QTY IN"] if c in df.columns]
         cols_dif = [c for c in ["DIF CAJAS","DIF UNI"] if c in df.columns]
         for c in cols_pl:
-            styles[c] = 'background-color:#dbeafe;color:#1e3a5f'   # azul pastel
+            styles[c] = 'background-color:#dbeafe;color:#1e3a5f'
         for c in cols_in:
-            styles[c] = 'background-color:#dcfce7;color:#14532d'   # verde pastel
+            styles[c] = 'background-color:#dcfce7;color:#14532d'
         for c in cols_dif:
-            styles[c] = 'background-color:#fef9c3;color:#713f12'   # amarillo pastel
+            styles[c] = 'background-color:#fef9c3;color:#713f12'
         return styles
 
     st.dataframe(
-        pk.style.apply(_colorear_pk, axis=None),
+        pk.style.apply(_colorear_pk, axis=None).format(
+            {c: "{:,.0f}" for c in ["DIF UNI","DIF CAJAS","CASE QTY PL","CASE QTY IN","QTY PL","QTY IN"] if c in pk.columns}
+        ),
         use_container_width=True,
         hide_index=True
     )
@@ -2915,18 +2923,10 @@ elif vista == "🔀  Cambios":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Selector de tipo de cambio ────────────────────────────────────────────
-    tipo_cambio = st.radio(
-        "¿Qué tipo de cambio deseas realizar?",
-        ["🏷️  Cambio de Estado", "📅  Cambio de Vencimiento", "📦  Cambio de Contenedor"],
-        horizontal=True,
-        key="tipo_cambio_sel"
-    )
-    st.divider()
-
     # ── Session state compartido por los 3 módulos ────────────────────────────
     for _k, _v in [
-        ("ce_paso",        1),
+        ("ce_paso",        0),
+        ("ce_tipo",        None),
         ("ce_fecha",       date.today()),
         ("ce_sku_sel",     None),
         ("ce_df_sku_snap", []),
@@ -2936,26 +2936,22 @@ elif vista == "🔀  Cambios":
         ("ce_ctn_dest",    None),
         ("ce_cantidad",    0),
         ("ce_exito",       False),
-        ("ce_tipo_prev",   None),
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
 
-    # Reset si el usuario cambia de tipo
-    if st.session_state["ce_tipo_prev"] != tipo_cambio:
-        st.session_state["ce_paso"]        = 1
-        st.session_state["ce_sku_sel"]     = None
-        st.session_state["ce_df_sku_snap"] = []
-        st.session_state["ce_registro"]    = None
-        st.session_state["ce_estado_dest"] = None
-        st.session_state["ce_fv_nueva"]    = None
-        st.session_state["ce_ctn_dest"]    = None
-        st.session_state["ce_cantidad"]    = 0
-        st.session_state["ce_exito"]       = False
-        st.session_state["ce_tipo_prev"]   = tipo_cambio
+    tipo_cambio = st.session_state.get("ce_tipo", None)
+
+    # ── Stock completo (incluyendo merma) ─────────────────────────────────────
+    stock_ce = calcular_stock(df, fecha_corte=date.today(), excluir_tipos=None)
+
+    if stock_ce.empty:
+        st.info("No hay stock registrado.")
+        st.stop()
 
     def reset_ce():
-        st.session_state["ce_paso"]        = 1
+        st.session_state["ce_paso"]        = 0
+        st.session_state["ce_tipo"]        = None
         st.session_state["ce_fecha"]       = date.today()
         st.session_state["ce_sku_sel"]     = None
         st.session_state["ce_df_sku_snap"] = []
@@ -2966,28 +2962,65 @@ elif vista == "🔀  Cambios":
         st.session_state["ce_cantidad"]    = 0
         st.session_state["ce_exito"]       = False
 
-    # ── Stock completo (incluyendo merma) ─────────────────────────────────────
-    stock_ce = calcular_stock(df, fecha_corte=date.today(), excluir_tipos=None)
+    # ─────────────────────────────────────────────────────────────────────────
+    # PASO 0: Pantalla de selección de tipo de cambio
+    # ─────────────────────────────────────────────────────────────────────────
+    if st.session_state["ce_paso"] == 0:
 
-    if stock_ce.empty:
-        st.info("No hay stock registrado.")
-        st.stop()
+        st.markdown(
+            "<div style='font-size:14px;font-weight:600;color:#1e293b;margin-bottom:20px'>"
+            "¿Qué tipo de cambio deseas realizar?</div>",
+            unsafe_allow_html=True
+        )
+
+        opciones = [
+            ("🏷️", "Cambio de Estado",      "Mueve unidades de un estado a otro",           "#eff6ff", "#185FA5", "#1e40af", "🏷️  Cambio de Estado"),
+            ("📅", "Cambio de Vencimiento",  "Modifica la fecha de vencimiento de un lote",   "#f5f3ff", "#7c3aed", "#7c3aed", "📅  Cambio de Vencimiento"),
+            ("📦", "Cambio de Contenedor",   "Traslada unidades a otro contenedor (CTN)",     "#ecfdf5", "#059669", "#065f46", "📦  Cambio de Contenedor"),
+        ]
+
+        cols = st.columns(3)
+        for col, (icon, titulo, desc, bg, border, text_color, tipo_key) in zip(cols, opciones):
+            with col:
+                st.markdown(
+                    f"<div style='background:{bg};border:2px solid {border};border-radius:12px;"
+                    f"padding:24px 20px;text-align:center;cursor:pointer'>"
+                    f"<div style='font-size:36px;margin-bottom:10px'>{icon}</div>"
+                    f"<div style='font-size:15px;font-weight:700;color:{text_color};margin-bottom:6px'>{titulo}</div>"
+                    f"<div style='font-size:12px;color:#64748b'>{desc}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+                if st.button(f"Seleccionar — {titulo}", key=f"btn_tipo_{titulo}", use_container_width=True):
+                    st.session_state["ce_tipo"] = tipo_key
+                    st.session_state["ce_paso"] = 1
+                    st.rerun()
 
     # ─────────────────────────────────────────────────────────────────────────
     # PASO 1 COMPARTIDO: seleccionar fecha y SKU, luego fila de stock
     # ─────────────────────────────────────────────────────────────────────────
-    if st.session_state["ce_paso"] == 1:
+    elif st.session_state["ce_paso"] == 1:
+
+        if not tipo_cambio:
+            st.session_state["ce_paso"] = 0; st.rerun()
 
         color_paso = "#1e40af" if "Estado" in tipo_cambio else ("#7c3aed" if "Vencimiento" in tipo_cambio else "#065f46")
         bg_paso    = "#eff6ff" if "Estado" in tipo_cambio else ("#f5f3ff" if "Vencimiento" in tipo_cambio else "#ecfdf5")
         bd_paso    = "#185FA5" if "Estado" in tipo_cambio else ("#7c3aed" if "Vencimiento" in tipo_cambio else "#059669")
 
-        st.markdown(
-            f"<div style=\"background:{bg_paso};border-left:4px solid {bd_paso};border-radius:6px;"
-            f"padding:10px 16px;font-size:13px;color:{color_paso};margin-bottom:16px\">"
-            f"<b>Paso 1 de 3</b> — Selecciona la fecha de registro y el SKU a modificar.</div>",
-            unsafe_allow_html=True
-        )
+        col_hdr, col_volver = st.columns([4, 1])
+        with col_hdr:
+            st.markdown(
+                f"<div style=\"background:{bg_paso};border-left:4px solid {bd_paso};border-radius:6px;"
+                f"padding:10px 16px;font-size:13px;color:{color_paso};margin-bottom:16px\">"
+                f"<b>Paso 1 de 3</b> — Selecciona la fecha de registro y el SKU a modificar.</div>",
+                unsafe_allow_html=True
+            )
+        with col_volver:
+            if st.button("← Cambiar tipo", use_container_width=True):
+                st.session_state["ce_paso"] = 0
+                st.session_state["ce_tipo"] = None
+                st.rerun()
 
         skus_disp  = sorted(stock_ce["SKU MASEF"].unique().tolist())
         sku_labels = {
