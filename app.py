@@ -2057,6 +2057,11 @@ elif vista == "📦  Packing List":
 
     st.divider()
 
+    # DIF UNI y DIF CAJAS como entero antes de mostrar
+    for _col in ["DIF UNI","DIF CAJAS","CASE QTY PL","CASE QTY IN","QTY PL","QTY IN"]:
+        if _col in pk.columns:
+            pk[_col] = pd.to_numeric(pk[_col], errors="coerce").fillna(0).astype(int)
+
     def _colorear_pk(df):
         styles = pd.DataFrame('', index=df.index, columns=df.columns)
         cols_pl  = [c for c in ["CASE QTY PL","CASE PACK PL","QTY PL"] if c in df.columns]
@@ -2071,9 +2076,7 @@ elif vista == "📦  Packing List":
         return styles
 
     st.dataframe(
-        pk.style.apply(_colorear_pk, axis=None).format(
-            {c: "{:,.0f}" for c in ["DIF UNI","DIF CAJAS","CASE QTY PL","CASE QTY IN","QTY PL","QTY IN"] if c in pk.columns}
-        ),
+        pk.style.apply(_colorear_pk, axis=None),
         use_container_width=True,
         hide_index=True
     )
