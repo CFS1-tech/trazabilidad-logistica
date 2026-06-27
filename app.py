@@ -583,7 +583,7 @@ ROL = st.session_state["rol"]
 
 VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "🔀  Cambio de Estado Stock", "⚠️  Salida de Merma"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
 
 reportes_opts    = VISTAS_REPORTES_ADMIN if ROL in ("administrador", "operario") else VISTAS_REPORTES_CLIENTE
 operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
@@ -2674,7 +2674,25 @@ elif vista == "📥  Carga Packing List":
             f"Vista previa — {len(df_up)} fila(s) detectadas</div>",
             unsafe_allow_html=True
         )
-        st.dataframe(df_up, use_container_width=True, hide_index=True)
+        # Colores por grupo de columnas
+        def _colorear_pl(df):
+            styles = pd.DataFrame('', index=df.index, columns=df.columns)
+            cols_pl  = [c for c in ["CASE QTY PL","CASE PACK PL","QTY PL"] if c in df.columns]
+            cols_in  = [c for c in ["CASE QTY IN","CASE PACK IN","QTY IN"] if c in df.columns]
+            cols_dif = [c for c in ["DIF CAJAS","DIF UNI"] if c in df.columns]
+            for c in cols_pl:
+                styles[c] = 'background-color:#dbeafe;color:#1e3a5f'   # azul pastel
+            for c in cols_in:
+                styles[c] = 'background-color:#dcfce7;color:#14532d'   # verde pastel
+            for c in cols_dif:
+                styles[c] = 'background-color:#fef9c3;color:#713f12'   # amarillo pastel
+            return styles
+
+        st.dataframe(
+            df_up.style.apply(_colorear_pl, axis=None),
+            use_container_width=True,
+            hide_index=True
+        )
 
         # Métricas rápidas
         m1, m2, m3, m4 = st.columns(4)
@@ -2863,7 +2881,7 @@ elif vista == "🔄  Cambio de Estado CTN":
 # VISTA: CAMBIO DE ESTADO STOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
-elif vista == "🔀  Cambio de Estado Stock":
+elif vista == "🔀  Cambios":
 
     if ROL != "administrador":
         st.error("❌ Solo administradores pueden acceder a este módulo.")
@@ -2873,26 +2891,51 @@ elif vista == "🔀  Cambio de Estado Stock":
     <div class="wms-header">
       <div style="font-size:32px">🔀</div>
       <div>
-        <h1>Cambio de Estado — Stock</h1>
-        <p>Mueve unidades de un estado a otro generando movimientos de ajuste</p>
+        <h1>Cambios</h1>
+        <p>Cambio de estado, vencimiento o contenedor — genera movimientos de ajuste</p>
       </div>
       <span class="wms-badge">Admin</span>
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Inicializar session state ──────────────────────────────────────────────
+    # ── Selector de tipo de cambio ────────────────────────────────────────────
+    tipo_cambio = st.radio(
+        "¿Qué tipo de cambio deseas realizar?",
+        ["🏷️  Cambio de Estado", "📅  Cambio de Vencimiento", "📦  Cambio de Contenedor"],
+        horizontal=True,
+        key="tipo_cambio_sel"
+    )
+    st.divider()
+
+    # ── Session state compartido por los 3 módulos ────────────────────────────
     for _k, _v in [
         ("ce_paso",        1),
         ("ce_fecha",       date.today()),
         ("ce_sku_sel",     None),
         ("ce_df_sku_snap", []),
-        ("ce_registro",    None),   # fila del stock seleccionada
+        ("ce_registro",    None),
         ("ce_estado_dest", None),
+        ("ce_fv_nueva",    None),
+        ("ce_ctn_dest",    None),
         ("ce_cantidad",    0),
         ("ce_exito",       False),
+        ("ce_tipo_prev",   None),
     ]:
         if _k not in st.session_state:
             st.session_state[_k] = _v
+
+    # Reset si el usuario cambia de tipo
+    if st.session_state["ce_tipo_prev"] != tipo_cambio:
+        st.session_state["ce_paso"]        = 1
+        st.session_state["ce_sku_sel"]     = None
+        st.session_state["ce_df_sku_snap"] = []
+        st.session_state["ce_registro"]    = None
+        st.session_state["ce_estado_dest"] = None
+        st.session_state["ce_fv_nueva"]    = None
+        st.session_state["ce_ctn_dest"]    = None
+        st.session_state["ce_cantidad"]    = 0
+        st.session_state["ce_exito"]       = False
+        st.session_state["ce_tipo_prev"]   = tipo_cambio
 
     def reset_ce():
         st.session_state["ce_paso"]        = 1
@@ -2901,27 +2944,35 @@ elif vista == "🔀  Cambio de Estado Stock":
         st.session_state["ce_df_sku_snap"] = []
         st.session_state["ce_registro"]    = None
         st.session_state["ce_estado_dest"] = None
+        st.session_state["ce_fv_nueva"]    = None
+        st.session_state["ce_ctn_dest"]    = None
         st.session_state["ce_cantidad"]    = 0
         st.session_state["ce_exito"]       = False
 
-    # ── Calcular stock completo (incluyendo merma) ─────────────────────────────
+    # ── Stock completo (incluyendo merma) ─────────────────────────────────────
     stock_ce = calcular_stock(df, fecha_corte=date.today(), excluir_tipos=None)
 
     if stock_ce.empty:
         st.info("No hay stock registrado.")
         st.stop()
 
-    # ── PASO 1: Seleccionar SKU y fecha de registro ────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # PASO 1 COMPARTIDO: seleccionar fecha y SKU, luego fila de stock
+    # ─────────────────────────────────────────────────────────────────────────
     if st.session_state["ce_paso"] == 1:
 
-        st.markdown("""
-        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
-                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
-          <b>Paso 1 de 3</b> — Selecciona la fecha de registro y el SKU a modificar.
-        </div>
-        """, unsafe_allow_html=True)
+        color_paso = "#1e40af" if "Estado" in tipo_cambio else ("#7c3aed" if "Vencimiento" in tipo_cambio else "#065f46")
+        bg_paso    = "#eff6ff" if "Estado" in tipo_cambio else ("#f5f3ff" if "Vencimiento" in tipo_cambio else "#ecfdf5")
+        bd_paso    = "#185FA5" if "Estado" in tipo_cambio else ("#7c3aed" if "Vencimiento" in tipo_cambio else "#059669")
 
-        skus_disp = sorted(stock_ce["SKU MASEF"].unique().tolist())
+        st.markdown(
+            f"<div style=\"background:{bg_paso};border-left:4px solid {bd_paso};border-radius:6px;"
+            f"padding:10px 16px;font-size:13px;color:{color_paso};margin-bottom:16px\">"
+            f"<b>Paso 1 de 3</b> — Selecciona la fecha de registro y el SKU a modificar.</div>",
+            unsafe_allow_html=True
+        )
+
+        skus_disp  = sorted(stock_ce["SKU MASEF"].unique().tolist())
         sku_labels = {
             s: f"{s} — {stock_ce[stock_ce['SKU MASEF']==s]['DESCRIPTION'].iloc[0]}"
             for s in skus_disp
@@ -2942,13 +2993,11 @@ elif vista == "🔀  Cambio de Estado Stock":
         st.session_state["ce_fecha"]   = inp_fecha_ce
         st.session_state["ce_sku_sel"] = inp_sku
 
-        # Guardar snapshot del stock del SKU actual para que los botones lo usen
         df_sku_snap = stock_ce[stock_ce["SKU MASEF"] == inp_sku][
             ["SKU MASEF", "DESCRIPTION", "CTN", "ESTADO", "FECHA VCTO", "Stock"]
         ].reset_index(drop=True)
         st.session_state["ce_df_sku_snap"] = df_sku_snap.to_dict("records")
 
-        # ── Mostrar stock del SKU seleccionado ────────────────────────────────
         st.divider()
         st.markdown(
             f"<div style='font-size:11px;font-weight:700;color:#64748b;"
@@ -2958,7 +3007,6 @@ elif vista == "🔀  Cambio de Estado Stock":
         )
 
         registros_snap = st.session_state.get("ce_df_sku_snap", [])
-
         if not registros_snap:
             st.info("No hay stock para este SKU.")
         else:
@@ -2987,20 +3035,20 @@ elif vista == "🔀  Cambio de Estado Stock":
                         st.session_state["ce_paso"]     = 2
                         st.rerun()
 
-    # ── PASO 2: Elegir estado destino y cantidad ───────────────────────────────
-    elif st.session_state["ce_paso"] == 2:
+    # ─────────────────────────────────────────────────────────────────────────
+    # ══ CAMBIO DE ESTADO ══
+    # ─────────────────────────────────────────────────────────────────────────
+    elif st.session_state["ce_paso"] == 2 and "Estado" in tipo_cambio:
 
-        reg   = st.session_state["ce_registro"]
-        fv    = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
+        reg = st.session_state["ce_registro"]
+        fv  = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
 
         st.markdown("""
         <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
                     padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
           <b>Paso 2 de 3</b> — Define el estado destino y la cantidad a mover.
-        </div>
-        """, unsafe_allow_html=True)
+        </div>""", unsafe_allow_html=True)
 
-        # Banner resumen del registro origen
         st.markdown(
             f"<div style='background:#0d1b2a;color:white;border-radius:10px;"
             f"padding:14px 20px;margin-bottom:16px;font-size:13px;line-height:1.8'>"
@@ -3008,168 +3056,258 @@ elif vista == "🔀  Cambio de Estado Stock":
             f"<b>CTN:</b> {reg['CTN']} &nbsp;|&nbsp; "
             f"<b>Estado origen:</b> <span style='color:#93c5fd'>{reg['ESTADO']}</span> &nbsp;|&nbsp; "
             f"<b>FV:</b> {fv} &nbsp;|&nbsp; "
-            f"<b>Stock disponible:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
-            f"</div>",
-            unsafe_allow_html=True
+            f"<b>Stock:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
+            f"</div>", unsafe_allow_html=True
         )
 
-        # Estados disponibles (todos excepto el actual)
-        estados_posibles = [
-            "DISTRIBUIDOR", "DISPONIBLE", "BANDEJAS", "BANDEJAS MIXTAS",
-            "LATAS SUELTAS", "DEVOLUCION", "MERMA", "GENERAL"
-        ]
+        estados_posibles = ["DISTRIBUIDOR","DISPONIBLE","BANDEJAS","BANDEJAS MIXTAS","LATAS SUELTAS","DEVOLUCION","MERMA","GENERAL"]
         estados_dest = [e for e in estados_posibles if e != reg["ESTADO"]]
 
-        with st.form("ce_form_paso2"):
+        with st.form("ce_form_estado_p2"):
             c1, c2 = st.columns(2)
             with c1:
                 inp_estado_dest = st.selectbox("🏷️ Estado destino", estados_dest, key="ce_inp_estado_dest")
             with c2:
-                inp_cantidad = st.number_input(
-                    "📦 Cantidad a mover",
-                    min_value=1,
-                    max_value=int(reg["Stock"]),
-                    value=int(reg["Stock"]),
-                    step=1,
-                    key="ce_inp_cantidad"
-                )
+                inp_cantidad = st.number_input("📦 Cantidad a mover", min_value=1, max_value=int(reg["Stock"]), value=int(reg["Stock"]), step=1, key="ce_inp_cantidad")
             c3, c4 = st.columns(2)
             with c3:
-                btn_continuar = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
+                btn_ok   = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
             with c4:
-                btn_volver = st.form_submit_button("⬅️  Volver", use_container_width=True)
+                btn_back = st.form_submit_button("⬅️  Volver", use_container_width=True)
 
-        if btn_volver:
-            st.session_state["ce_paso"] = 1
-            st.rerun()
-
-        if btn_continuar:
+        if btn_back:
+            st.session_state["ce_paso"] = 1; st.rerun()
+        if btn_ok:
             st.session_state["ce_estado_dest"] = st.session_state["ce_inp_estado_dest"]
             st.session_state["ce_cantidad"]    = int(st.session_state["ce_inp_cantidad"])
-            st.session_state["ce_paso"]        = 3
-            st.rerun()
+            st.session_state["ce_paso"]        = 3; st.rerun()
 
-    # ── PASO 3: Confirmación y escritura ──────────────────────────────────────
-    elif st.session_state["ce_paso"] == 3:
+    elif st.session_state["ce_paso"] == 3 and "Estado" in tipo_cambio:
 
-        reg          = st.session_state["ce_registro"]
-        estado_dest  = st.session_state["ce_estado_dest"]
-        cantidad     = st.session_state["ce_cantidad"]
-        fecha_reg    = st.session_state["ce_fecha"].strftime("%d/%m/%Y")
-        fv           = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
+        reg         = st.session_state["ce_registro"]
+        estado_dest = st.session_state["ce_estado_dest"]
+        cantidad    = st.session_state["ce_cantidad"]
+        fecha_reg   = st.session_state["ce_fecha"].strftime("%d/%m/%Y")
+        fv          = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
 
         st.markdown("""
         <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
                     padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
-          <b>Paso 3 de 3</b> — Revisa el resumen y confirma el cambio.
-        </div>
-        """, unsafe_allow_html=True)
+          <b>Paso 3 de 3</b> — Revisa el resumen y confirma.
+        </div>""", unsafe_allow_html=True)
 
-        # Resumen visual
-        c_orig, c_arrow, c_dest = st.columns([2, 1, 2])
+        c_orig, c_arrow, c_dest = st.columns([2,1,2])
         with c_orig:
-            st.markdown(
-                f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;"
-                f"padding:16px;text-align:center'>"
-                f"<div style='font-size:11px;color:#dc2626;font-weight:700;text-transform:uppercase;"
-                f"letter-spacing:.08em;margin-bottom:6px'>AJUSTE OUT</div>"
-                f"<div style='font-size:22px;font-weight:700;color:#dc2626'>−{cantidad:,}</div>"
-                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
-                f"Estado: <b>{reg['ESTADO']}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#dc2626;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE OUT</div><div style='font-size:22px;font-weight:700;color:#dc2626'>−{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>Estado: <b>{reg['ESTADO']}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div></div>", unsafe_allow_html=True)
         with c_arrow:
-            st.markdown(
-                "<div style='display:flex;align-items:center;justify-content:center;"
-                "height:100%;font-size:32px'>→</div>",
-                unsafe_allow_html=True
-            )
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:100%;font-size:32px'>→</div>", unsafe_allow_html=True)
         with c_dest:
-            st.markdown(
-                f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:10px;"
-                f"padding:16px;text-align:center'>"
-                f"<div style='font-size:11px;color:#16a34a;font-weight:700;text-transform:uppercase;"
-                f"letter-spacing:.08em;margin-bottom:6px'>AJUSTE IN</div>"
-                f"<div style='font-size:22px;font-weight:700;color:#16a34a'>+{cantidad:,}</div>"
-                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
-                f"Estado: <b>{estado_dest}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div>"
-                f"</div>",
-                unsafe_allow_html=True
-            )
+            st.markdown(f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#16a34a;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE IN</div><div style='font-size:22px;font-weight:700;color:#16a34a'>+{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>Estado: <b>{estado_dest}</b><br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div></div>", unsafe_allow_html=True)
 
-        st.markdown(
-            f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
-            f"padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px;margin-bottom:16px'>"
-            f"📅 Fecha: <b>{fecha_reg}</b> &nbsp;|&nbsp; "
-            f"SKU: <b>{reg['SKU MASEF']}</b> — {reg['DESCRIPTION']}"
-            f"</div>",
-            unsafe_allow_html=True
-        )
+        st.markdown(f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px;margin-bottom:16px'>📅 Fecha: <b>{fecha_reg}</b> &nbsp;|&nbsp; SKU: <b>{reg['SKU MASEF']}</b> — {reg['DESCRIPTION']}</div>", unsafe_allow_html=True)
 
         col_ok, col_back = st.columns(2)
-
         with col_back:
-            if st.button("⬅️  Volver", use_container_width=True):
-                st.session_state["ce_paso"] = 2
-                st.rerun()
-
+            if st.button("⬅️  Volver", use_container_width=True, key="ce_back_est"):
+                st.session_state["ce_paso"] = 2; st.rerun()
         with col_ok:
-            if st.button("✅  Confirmar cambio de estado", use_container_width=True, type="primary"):
-
-                obs_out = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
-                obs_in  = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
-
-                # Columnas: FECHA, SKU MASEF, DESCRIPTION, CTN, ESTADO, FECHA VCTO,
-                #           TOTAL UNIT, GUIA, TIPO DE MOVIMIENTO, Tienda, OBS
-                fila_out = [
-                    fecha_reg,
-                    reg["SKU MASEF"],
-                    reg["DESCRIPTION"],
-                    reg["CTN"],
-                    reg["ESTADO"],
-                    fv,
-                    -cantidad,
-                    "",
-                    "AJUSTE",
-                    "",
-                    obs_out,
-                ]
-                fila_in = [
-                    fecha_reg,
-                    reg["SKU MASEF"],
-                    reg["DESCRIPTION"],
-                    reg["CTN"],
-                    estado_dest,
-                    fv,
-                    cantidad,
-                    "",
-                    "AJUSTE",
-                    "",
-                    obs_in,
-                ]
-
+            if st.button("✅  Confirmar cambio de estado", use_container_width=True, type="primary", key="ce_confirm_est"):
+                obs = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], estado_dest,   fv,  cantidad, "", "AJUSTE", "", obs]
                 try:
                     client_ce = get_client()
-                    sh_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"])
-                    ws_ce     = sh_ce.worksheet(SHEET_NAME)
+                    ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
                     ws_ce.append_rows([fila_out, fila_in], value_input_option="USER_ENTERED")
                     st.cache_data.clear()
                     st.session_state["ce_exito"] = True
-                    reset_ce()
-                    st.rerun()
+                    reset_ce(); st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error al guardar en Google Sheets: {e}")
+                    st.error(f"❌ Error al guardar: {e}")
 
-        if st.session_state.get("ce_exito"):
-            st.session_state["ce_exito"] = False
+    # ─────────────────────────────────────────────────────────────────────────
+    # ══ CAMBIO DE VENCIMIENTO ══
+    # ─────────────────────────────────────────────────────────────────────────
+    elif st.session_state["ce_paso"] == 2 and "Vencimiento" in tipo_cambio:
+
+        reg = st.session_state["ce_registro"]
+        fv  = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
+
+        st.markdown("""
+        <div style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#7c3aed;margin-bottom:16px">
+          <b>Paso 2 de 3</b> — Define la nueva fecha de vencimiento y la cantidad.
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown(
+            f"<div style='background:#0d1b2a;color:white;border-radius:10px;"
+            f"padding:14px 20px;margin-bottom:16px;font-size:13px;line-height:1.8'>"
+            f"<b>SKU:</b> {reg['SKU MASEF']} — {reg['DESCRIPTION']}<br>"
+            f"<b>CTN:</b> {reg['CTN']} &nbsp;|&nbsp; "
+            f"<b>Estado:</b> <span style='color:#c4b5fd'>{reg['ESTADO']}</span> &nbsp;|&nbsp; "
+            f"<b>FV actual:</b> <span style='color:#fbbf24'>{fv}</span> &nbsp;|&nbsp; "
+            f"<b>Stock:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
+            f"</div>", unsafe_allow_html=True
+        )
+
+        with st.form("ce_form_fv_p2"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_fv_nueva = st.date_input("📅 Nueva fecha de vencimiento", key="ce_inp_fv_nueva")
+            with c2:
+                inp_cantidad = st.number_input("📦 Cantidad a ajustar", min_value=1, max_value=int(reg["Stock"]), value=int(reg["Stock"]), step=1, key="ce_inp_cantidad_fv")
+            c3, c4 = st.columns(2)
+            with c3:
+                btn_ok   = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
+            with c4:
+                btn_back = st.form_submit_button("⬅️  Volver", use_container_width=True)
+
+        if btn_back:
+            st.session_state["ce_paso"] = 1; st.rerun()
+        if btn_ok:
+            st.session_state["ce_fv_nueva"] = st.session_state["ce_inp_fv_nueva"].strftime("%d/%m/%Y")
+            st.session_state["ce_cantidad"] = int(st.session_state["ce_inp_cantidad_fv"])
+            st.session_state["ce_paso"]     = 3; st.rerun()
+
+    elif st.session_state["ce_paso"] == 3 and "Vencimiento" in tipo_cambio:
+
+        reg       = st.session_state["ce_registro"]
+        fv_vieja  = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
+        fv_nueva  = st.session_state["ce_fv_nueva"]
+        cantidad  = st.session_state["ce_cantidad"]
+        fecha_reg = st.session_state["ce_fecha"].strftime("%d/%m/%Y")
+
+        st.markdown("""
+        <div style="background:#f5f3ff;border-left:4px solid #7c3aed;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#7c3aed;margin-bottom:16px">
+          <b>Paso 3 de 3</b> — Revisa el resumen y confirma el cambio de vencimiento.
+        </div>""", unsafe_allow_html=True)
+
+        c_orig, c_arrow, c_dest = st.columns([2,1,2])
+        with c_orig:
+            st.markdown(f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#dc2626;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE OUT</div><div style='font-size:22px;font-weight:700;color:#dc2626'>−{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>FV: <b>{fv_vieja or '—'}</b><br>CTN: {reg['CTN']}<br>Estado: {reg['ESTADO']}</div></div>", unsafe_allow_html=True)
+        with c_arrow:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:100%;font-size:32px'>→</div>", unsafe_allow_html=True)
+        with c_dest:
+            st.markdown(f"<div style='background:#f5f3ff;border:1px solid #c4b5fd;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#7c3aed;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE IN</div><div style='font-size:22px;font-weight:700;color:#7c3aed'>+{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>FV: <b>{fv_nueva}</b><br>CTN: {reg['CTN']}<br>Estado: {reg['ESTADO']}</div></div>", unsafe_allow_html=True)
+
+        st.markdown(f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px;margin-bottom:16px'>📅 Fecha: <b>{fecha_reg}</b> &nbsp;|&nbsp; SKU: <b>{reg['SKU MASEF']}</b> — {reg['DESCRIPTION']}</div>", unsafe_allow_html=True)
+
+        col_ok, col_back = st.columns(2)
+        with col_back:
+            if st.button("⬅️  Volver", use_container_width=True, key="ce_back_fv"):
+                st.session_state["ce_paso"] = 2; st.rerun()
+        with col_ok:
+            if st.button("✅  Confirmar cambio de vencimiento", use_container_width=True, type="primary", key="ce_confirm_fv"):
+                obs = f"Cambio de vencimiento: {fv_vieja} → {fv_nueva}"
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_vieja, -cantidad, "", "AJUSTE", "", obs]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_nueva,  cantidad, "", "AJUSTE", "", obs]
+                try:
+                    client_ce = get_client()
+                    ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                    ws_ce.append_rows([fila_out, fila_in], value_input_option="USER_ENTERED")
+                    st.cache_data.clear()
+                    st.session_state["ce_exito"] = True
+                    reset_ce(); st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {e}")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # ══ CAMBIO DE CONTENEDOR ══
+    # ─────────────────────────────────────────────────────────────────────────
+    elif st.session_state["ce_paso"] == 2 and "Contenedor" in tipo_cambio:
+
+        reg = st.session_state["ce_registro"]
+        fv  = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
+
+        st.markdown("""
+        <div style="background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px">
+          <b>Paso 2 de 3</b> — Selecciona el contenedor destino y la cantidad a mover.
+        </div>""", unsafe_allow_html=True)
+
+        st.markdown(
+            f"<div style='background:#0d1b2a;color:white;border-radius:10px;"
+            f"padding:14px 20px;margin-bottom:16px;font-size:13px;line-height:1.8'>"
+            f"<b>SKU:</b> {reg['SKU MASEF']} — {reg['DESCRIPTION']}<br>"
+            f"<b>CTN origen:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['CTN']}</span> &nbsp;|&nbsp; "
+            f"<b>Estado:</b> <span style='color:#93c5fd'>{reg['ESTADO']}</span> &nbsp;|&nbsp; "
+            f"<b>FV:</b> {fv} &nbsp;|&nbsp; "
+            f"<b>Stock:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
+            f"</div>", unsafe_allow_html=True
+        )
+
+        # CTNs existentes en el sistema (excluyendo el actual)
+        ctns_disponibles = sorted([c for c in df["CTN"].dropna().astype(str).unique() if c != reg["CTN"]])
+
+        with st.form("ce_form_ctn_p2"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_ctn_dest = st.selectbox("📦 Contenedor destino", ctns_disponibles, key="ce_inp_ctn_dest")
+            with c2:
+                inp_cantidad = st.number_input("📦 Cantidad a mover", min_value=1, max_value=int(reg["Stock"]), value=int(reg["Stock"]), step=1, key="ce_inp_cantidad_ctn")
+            c3, c4 = st.columns(2)
+            with c3:
+                btn_ok   = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
+            with c4:
+                btn_back = st.form_submit_button("⬅️  Volver", use_container_width=True)
+
+        if btn_back:
+            st.session_state["ce_paso"] = 1; st.rerun()
+        if btn_ok:
+            st.session_state["ce_ctn_dest"] = st.session_state["ce_inp_ctn_dest"]
+            st.session_state["ce_cantidad"] = int(st.session_state["ce_inp_cantidad_ctn"])
+            st.session_state["ce_paso"]     = 3; st.rerun()
+
+    elif st.session_state["ce_paso"] == 3 and "Contenedor" in tipo_cambio:
+
+        reg       = st.session_state["ce_registro"]
+        ctn_dest  = st.session_state["ce_ctn_dest"]
+        cantidad  = st.session_state["ce_cantidad"]
+        fecha_reg = st.session_state["ce_fecha"].strftime("%d/%m/%Y")
+        fv        = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
+
+        st.markdown("""
+        <div style="background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px">
+          <b>Paso 3 de 3</b> — Revisa el resumen y confirma el cambio de contenedor.
+        </div>""", unsafe_allow_html=True)
+
+        c_orig, c_arrow, c_dest = st.columns([2,1,2])
+        with c_orig:
+            st.markdown(f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#dc2626;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE OUT</div><div style='font-size:22px;font-weight:700;color:#dc2626'>−{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>CTN: <b>{reg['CTN']}</b><br>Estado: {reg['ESTADO']}<br>FV: {fv or '—'}</div></div>", unsafe_allow_html=True)
+        with c_arrow:
+            st.markdown("<div style='display:flex;align-items:center;justify-content:center;height:100%;font-size:32px'>→</div>", unsafe_allow_html=True)
+        with c_dest:
+            st.markdown(f"<div style='background:#ecfdf5;border:1px solid #6ee7b7;border-radius:10px;padding:16px;text-align:center'><div style='font-size:11px;color:#059669;font-weight:700;text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px'>AJUSTE IN</div><div style='font-size:22px;font-weight:700;color:#059669'>+{cantidad:,}</div><div style='font-size:12px;color:#64748b;margin-top:6px'>CTN: <b>{ctn_dest}</b><br>Estado: {reg['ESTADO']}<br>FV: {fv or '—'}</div></div>", unsafe_allow_html=True)
+
+        st.markdown(f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px;margin-bottom:16px'>📅 Fecha: <b>{fecha_reg}</b> &nbsp;|&nbsp; SKU: <b>{reg['SKU MASEF']}</b> — {reg['DESCRIPTION']}</div>", unsafe_allow_html=True)
+
+        col_ok, col_back = st.columns(2)
+        with col_back:
+            if st.button("⬅️  Volver", use_container_width=True, key="ce_back_ctn"):
+                st.session_state["ce_paso"] = 2; st.rerun()
+        with col_ok:
+            if st.button("✅  Confirmar cambio de contenedor", use_container_width=True, type="primary", key="ce_confirm_ctn"):
+                obs = f"Cambio de contenedor: {reg['CTN']} → {ctn_dest}"
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"],  reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], ctn_dest,    reg["ESTADO"], fv,  cantidad, "", "AJUSTE", "", obs]
+                try:
+                    client_ce = get_client()
+                    ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                    ws_ce.append_rows([fila_out, fila_in], value_input_option="USER_ENTERED")
+                    st.cache_data.clear()
+                    st.session_state["ce_exito"] = True
+                    reset_ce(); st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {e}")
 
     # ── Banner de éxito ────────────────────────────────────────────────────────
     if st.session_state.get("ce_exito"):
-        st.success("✅ Cambio de estado registrado correctamente.")
+        st.session_state["ce_exito"] = False
+        st.success("✅ Cambio registrado correctamente.")
         if st.button("🔀  Hacer otro cambio", use_container_width=True):
-            reset_ce()
-            st.rerun()
+            reset_ce(); st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
