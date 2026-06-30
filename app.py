@@ -2963,132 +2963,192 @@ elif vista == "📥  Ingreso Maquila":
                     st.error(f"❌ Error al guardar en Google Sheets: {e}")
 
     # ════════════════════════════════════════════════════════════════════════
-    # MODO 2: FORMULARIO MANUAL
+    # MODO 2: FORMULARIO MANUAL (2 pasos: cabecera CTN/Fecha → productos)
     # ════════════════════════════════════════════════════════════════════════
     else:
 
         for _k, _v in [
+            ("im_form_paso",   1),
             ("im_form_fecha",  date.today()),
+            ("im_form_ctn",    ""),
             ("im_form_items",  []),
             ("im_form_exito",  False),
         ]:
             if _k not in st.session_state:
                 st.session_state[_k] = _v
 
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#64748b;"
-            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-            "✍️ Agrega los productos uno por uno</div>",
-            unsafe_allow_html=True
-        )
+        def reset_im_form():
+            st.session_state["im_form_paso"]  = 1
+            st.session_state["im_form_fecha"] = date.today()
+            st.session_state["im_form_ctn"]   = ""
+            st.session_state["im_form_items"] = []
+            st.session_state["im_form_exito"] = False
 
-        skus_pl_im = sorted(packing_df[col_sku_pk].dropna().astype(str).unique().tolist())
-        desc_col_im = next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
-        sku_labels_im = {
-            s: f"{s} — {packing_df[packing_df[col_sku_pk].astype(str)==s][desc_col_im].iloc[0]}"
-            for s in skus_pl_im
-        }
+        # ── PASO 1: Fecha de ingreso y CTN (comunes a todos los productos) ────────
+        if st.session_state["im_form_paso"] == 1:
 
-        with st.form("im_form_add_item", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                inp_sku_im = st.selectbox("🔍 SKU", skus_pl_im, format_func=lambda s: sku_labels_im.get(s, s), key="im_inp_sku")
-            with c2:
-                inp_ctn_im = st.text_input("📦 CTN (contenedor)", key="im_inp_ctn")
-            c3, c4, c5 = st.columns(3)
-            with c3:
-                inp_estado_im = st.selectbox(
-                    "🏷️ Estado",
-                    ["DISPONIBLE","DISTRIBUIDOR","BANDEJAS","BANDEJAS MIXTAS","LATAS SUELTAS","DEVOLUCION","MERMA","GENERAL"],
-                    key="im_inp_estado"
-                )
-            with c4:
-                inp_fv_im = st.date_input("📅 Fecha de vencimiento", key="im_inp_fv")
-            with c5:
-                inp_cant_im = st.number_input("📦 Cantidad", min_value=1, value=1, step=1, key="im_inp_cant")
-            inp_obs_im = st.text_input("📝 Observación (opcional)", key="im_inp_obs")
+            st.markdown("""
+            <div style="background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;
+                        padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px">
+              <b>Paso 1 de 2</b> — Indica la fecha de ingreso y el contenedor (CTN). Serán los mismos para todos los productos que agregues.
+            </div>""", unsafe_allow_html=True)
 
-            btn_add_im = st.form_submit_button("➕  Agregar a la lista", use_container_width=True)
+            with st.form("im_form_cabecera"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    inp_fecha_cab = st.date_input("📅 Fecha de ingreso del contenedor", value=st.session_state["im_form_fecha"], key="im_inp_fecha_cab")
+                with c2:
+                    inp_ctn_cab = st.text_input("📦 CTN (contenedor)", value=st.session_state["im_form_ctn"], key="im_inp_ctn_cab")
+                btn_continuar_cab = st.form_submit_button("➡️  Continuar a productos", use_container_width=True, type="primary")
 
-        if btn_add_im:
-            if not inp_ctn_im.strip():
-                st.error("❌ Debes indicar el CTN.")
-            else:
-                desc_im = packing_df[packing_df[col_sku_pk].astype(str) == inp_sku_im][desc_col_im].iloc[0] \
-                    if (packing_df[col_sku_pk].astype(str) == inp_sku_im).any() else ""
-                st.session_state["im_form_items"].append({
-                    "SKU MASEF": inp_sku_im,
-                    "DESCRIPTION": desc_im,
-                    "CTN": inp_ctn_im.strip(),
-                    "ESTADO": inp_estado_im,
-                    "FECHA VCTO": inp_fv_im.strftime("%d/%m/%Y"),
-                    "TOTAL UNIT": int(inp_cant_im),
-                    "OBS": inp_obs_im.strip(),
-                })
-                st.rerun()
-
-        # ── Lista acumulada ────────────────────────────────────────────────────
-        if st.session_state["im_form_items"]:
-            st.divider()
-            st.markdown(
-                f"<div style='font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px'>"
-                f"📋 Productos a ingresar — {len(st.session_state['im_form_items'])}</div>",
-                unsafe_allow_html=True
-            )
-
-            for i, item in enumerate(st.session_state["im_form_items"]):
-                col_info, col_del = st.columns([5, 1])
-                with col_info:
-                    st.markdown(
-                        f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
-                        f"padding:10px 14px;font-size:13px;line-height:1.6'>"
-                        f"<b>{item['SKU MASEF']}</b> — {item['DESCRIPTION']}<br>"
-                        f"CTN: {item['CTN']} &nbsp;|&nbsp; Estado: <b>{item['ESTADO']}</b> &nbsp;|&nbsp; "
-                        f"FV: {item['FECHA VCTO']} &nbsp;|&nbsp; "
-                        f"Cantidad: <span style='color:#059669;font-weight:700'>{item['TOTAL UNIT']:,}</span>"
-                        f"</div>", unsafe_allow_html=True
-                    )
-                with col_del:
-                    if st.button("🗑️", key=f"im_del_{i}", use_container_width=True):
-                        st.session_state["im_form_items"].pop(i)
-                        st.rerun()
-
-            total_im_form = sum(it["TOTAL UNIT"] for it in st.session_state["im_form_items"])
-            st.markdown(
-                f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:8px;"
-                f"padding:10px 16px;font-size:13px;color:#065f46;margin:12px 0'>"
-                f"<b>Total a ingresar: {total_im_form:,} unidades</b></div>",
-                unsafe_allow_html=True
-            )
-
-            fecha_im_form = st.date_input("📅 Fecha de ingreso", value=st.session_state["im_form_fecha"], key="im_fecha_form")
-
-            col_conf, col_clear = st.columns(2)
-            with col_clear:
-                if st.button("🗑️  Vaciar lista", use_container_width=True):
-                    st.session_state["im_form_items"] = []
+            if btn_continuar_cab:
+                if not inp_ctn_cab.strip():
+                    st.error("❌ Debes indicar el CTN.")
+                else:
+                    st.session_state["im_form_fecha"] = inp_fecha_cab
+                    st.session_state["im_form_ctn"]   = inp_ctn_cab.strip()
+                    st.session_state["im_form_paso"]  = 2
                     st.rerun()
-            with col_conf:
-                if st.button("✅  Confirmar ingreso al sistema", use_container_width=True, type="primary"):
-                    fecha_str_form = fecha_im_form.strftime("%d/%m/%Y")
-                    filas_form = []
-                    for item in st.session_state["im_form_items"]:
-                        filas_form.append([
-                            fecha_str_form, item["SKU MASEF"], item["DESCRIPTION"], item["CTN"],
-                            item["ESTADO"], item["FECHA VCTO"], int(item["TOTAL UNIT"]), "", "INGRESO",
-                            "", item["OBS"], NOMBRE_USUARIO
-                        ])
-                    try:
-                        client_im = get_client()
-                        ws_im     = client_im.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
-                        ws_im.append_rows(filas_form, value_input_option="USER_ENTERED")
-                        st.cache_data.clear()
+
+        # ── PASO 2: Agregar productos (existentes o nuevos) ────────────────────────
+        elif st.session_state["im_form_paso"] == 2:
+
+            col_hdr, col_volver = st.columns([4, 1])
+            with col_hdr:
+                st.markdown(
+                    f"<div style='background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;"
+                    f"padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px'>"
+                    f"<b>Paso 2 de 2</b> — CTN: <b>{st.session_state['im_form_ctn']}</b> &nbsp;|&nbsp; "
+                    f"Fecha: <b>{st.session_state['im_form_fecha'].strftime('%d/%m/%Y')}</b>. "
+                    f"Agrega los productos uno por uno.</div>",
+                    unsafe_allow_html=True
+                )
+            with col_volver:
+                if st.button("← Cambiar CTN/Fecha", use_container_width=True):
+                    st.session_state["im_form_paso"] = 1
+                    st.rerun()
+
+            skus_pl_im = sorted(packing_df[col_sku_pk].dropna().astype(str).unique().tolist())
+            desc_col_im = next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
+            sku_labels_im = {
+                s: f"{s} — {packing_df[packing_df[col_sku_pk].astype(str)==s][desc_col_im].iloc[0]}"
+                for s in skus_pl_im
+            }
+
+            es_sku_nuevo = st.checkbox("➕ Es un SKU nuevo (no existe en el Packing List)", key="im_chk_nuevo")
+
+            with st.form("im_form_add_item", clear_on_submit=True):
+                if es_sku_nuevo:
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        inp_sku_im = st.text_input("🆕 Nuevo SKU", key="im_inp_sku_nuevo")
+                    with c2:
+                        inp_desc_im = st.text_input("📝 Descripción del producto", key="im_inp_desc_nuevo")
+                else:
+                    inp_sku_im = st.selectbox("🔍 SKU", skus_pl_im, format_func=lambda s: sku_labels_im.get(s, s), key="im_inp_sku")
+                    inp_desc_im = None  # se completa luego desde el packing list
+
+                c3, c4, c5 = st.columns(3)
+                with c3:
+                    inp_estado_im = st.selectbox(
+                        "🏷️ Estado",
+                        ["DISPONIBLE","DISTRIBUIDOR","BANDEJAS","BANDEJAS MIXTAS","LATAS SUELTAS","DEVOLUCION","MERMA","GENERAL"],
+                        key="im_inp_estado"
+                    )
+                with c4:
+                    inp_fv_im = st.date_input("📅 Fecha de vencimiento", key="im_inp_fv")
+                with c5:
+                    inp_cant_im = st.number_input("📦 Cantidad", min_value=1, value=1, step=1, key="im_inp_cant")
+                inp_obs_im = st.text_input("📝 Observación (opcional)", key="im_inp_obs")
+
+                btn_add_im = st.form_submit_button("➕  Agregar a la lista", use_container_width=True)
+
+            if btn_add_im:
+                sku_final = (inp_sku_im or "").strip()
+                if not sku_final:
+                    st.error("❌ Debes indicar el SKU.")
+                elif es_sku_nuevo and not (inp_desc_im or "").strip():
+                    st.error("❌ Debes indicar la descripción del nuevo producto.")
+                else:
+                    if es_sku_nuevo:
+                        desc_im = inp_desc_im.strip()
+                    else:
+                        desc_im = packing_df[packing_df[col_sku_pk].astype(str) == sku_final][desc_col_im].iloc[0] \
+                            if (packing_df[col_sku_pk].astype(str) == sku_final).any() else ""
+
+                    st.session_state["im_form_items"].append({
+                        "SKU MASEF": sku_final,
+                        "DESCRIPTION": desc_im,
+                        "CTN": st.session_state["im_form_ctn"],
+                        "ESTADO": inp_estado_im,
+                        "FECHA VCTO": inp_fv_im.strftime("%d/%m/%Y"),
+                        "TOTAL UNIT": int(inp_cant_im),
+                        "OBS": inp_obs_im.strip(),
+                    })
+                    st.rerun()
+
+            # ── Lista acumulada ────────────────────────────────────────────────────
+            if st.session_state["im_form_items"]:
+                st.divider()
+                st.markdown(
+                    f"<div style='font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px'>"
+                    f"📋 Productos a ingresar — {len(st.session_state['im_form_items'])}</div>",
+                    unsafe_allow_html=True
+                )
+
+                for i, item in enumerate(st.session_state["im_form_items"]):
+                    col_info, col_del = st.columns([5, 1])
+                    with col_info:
+                        st.markdown(
+                            f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
+                            f"padding:10px 14px;font-size:13px;line-height:1.6'>"
+                            f"<b>{item['SKU MASEF']}</b> — {item['DESCRIPTION']}<br>"
+                            f"CTN: {item['CTN']} &nbsp;|&nbsp; Estado: <b>{item['ESTADO']}</b> &nbsp;|&nbsp; "
+                            f"FV: {item['FECHA VCTO']} &nbsp;|&nbsp; "
+                            f"Cantidad: <span style='color:#059669;font-weight:700'>{item['TOTAL UNIT']:,}</span>"
+                            f"</div>", unsafe_allow_html=True
+                        )
+                    with col_del:
+                        if st.button("🗑️", key=f"im_del_{i}", use_container_width=True):
+                            st.session_state["im_form_items"].pop(i)
+                            st.rerun()
+
+                total_im_form = sum(it["TOTAL UNIT"] for it in st.session_state["im_form_items"])
+                st.markdown(
+                    f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:8px;"
+                    f"padding:10px 16px;font-size:13px;color:#065f46;margin:12px 0'>"
+                    f"<b>Total a ingresar: {total_im_form:,} unidades</b></div>",
+                    unsafe_allow_html=True
+                )
+
+                col_conf, col_clear = st.columns(2)
+                with col_clear:
+                    if st.button("🗑️  Vaciar lista", use_container_width=True):
                         st.session_state["im_form_items"] = []
-                        st.success(f"✅ Se ingresaron {len(filas_form)} registros correctamente ({total_im_form:,} unidades).")
-                    except Exception as e:
-                        st.error(f"❌ Error al guardar en Google Sheets: {e}")
-        else:
-            st.info("Agrega productos usando el formulario de arriba.")
+                        st.rerun()
+                with col_conf:
+                    if st.button("✅  Confirmar ingreso al sistema", use_container_width=True, type="primary"):
+                        fecha_str_form = st.session_state["im_form_fecha"].strftime("%d/%m/%Y")
+                        filas_form = []
+                        for item in st.session_state["im_form_items"]:
+                            filas_form.append([
+                                fecha_str_form, item["SKU MASEF"], item["DESCRIPTION"], item["CTN"],
+                                item["ESTADO"], item["FECHA VCTO"], int(item["TOTAL UNIT"]), "", "INGRESO",
+                                "", item["OBS"], NOMBRE_USUARIO
+                            ])
+                        try:
+                            client_im = get_client()
+                            ws_im     = client_im.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                            ws_im.append_rows(filas_form, value_input_option="USER_ENTERED")
+                            st.cache_data.clear()
+                            total_ok = total_im_form
+                            cant_ok  = len(filas_form)
+                            reset_im_form()
+                            st.success(f"✅ Se ingresaron {cant_ok} registros correctamente ({total_ok:,} unidades).")
+                        except Exception as e:
+                            st.error(f"❌ Error al guardar en Google Sheets: {e}")
+            else:
+                st.info("Agrega productos usando el formulario de arriba.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
