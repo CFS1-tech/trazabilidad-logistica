@@ -615,14 +615,14 @@ ROL = st.session_state["rol"]
 NOMBRE_USUARIO = st.session_state.get("nombre") or st.session_state.get("usuario") or ""
 
 VISTAS_REPORTES_ADMIN    = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
-VISTAS_REPORTES_OPERACIONES = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
+VISTAS_REPORTES_OPERADOR = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE  = ["📊  Dashboard", "🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
 
 if ROL == "administrador":
     reportes_opts = VISTAS_REPORTES_ADMIN
 elif ROL == "operaciones":
-    reportes_opts = VISTAS_REPORTES_OPERACIONES
+    reportes_opts = VISTAS_REPORTES_OPERADOR
 else:
     reportes_opts = VISTAS_REPORTES_CLIENTE
 
