@@ -508,30 +508,62 @@ def botones_descarga(df_display, nombre):
 
 # ── Login ─────────────────────────────────────────────────────────────────────
 
-USUARIOS = {
-    "admin":      {"password": "Duquesa24",   "rol": "administrador"},
-    "Masef_CFS":  {"password": "Masef2026",  "rol": "cliente"},
-    "operario":   {"password": "Op2026",     "rol": "operario"},
-}
+SHEET_USUARIOS = "USUARIOS"
+
+@st.cache_data(ttl=120)
+def cargar_usuarios() -> pd.DataFrame:
+    """Carga la hoja USUARIOS: columnas esperadas
+       USUARIO | PASSWORD | NOMBRE COMPLETO | ROL | ACTIVO
+    """
+    def _cargar():
+        client = get_client()
+        sh = client.open_by_key(st.secrets["spreadsheet_id"])
+        ws = sh.worksheet(SHEET_USUARIOS)
+        return pd.DataFrame(ws.get_all_records())
+
+    try:
+        u = _con_reintentos(_cargar)
+    except Exception:
+        return pd.DataFrame(columns=["USUARIO", "PASSWORD", "NOMBRE COMPLETO", "ROL", "ACTIVO"])
+
+    for col in ["USUARIO", "PASSWORD", "NOMBRE COMPLETO", "ROL", "ACTIVO"]:
+        if col not in u.columns:
+            u[col] = ""
+    u["USUARIO"]  = u["USUARIO"].astype(str).str.strip()
+    u["PASSWORD"] = u["PASSWORD"].astype(str).str.strip()
+    u["ROL"]      = u["ROL"].astype(str).str.strip().str.lower()
+    u["ACTIVO"]   = u["ACTIVO"].astype(str).str.strip().str.upper()
+    return u
 
 if "autenticado" not in st.session_state:
     st.session_state["autenticado"] = False
     st.session_state["rol"]         = None
-    st.session_state["usuario"]     = None
+    st.session_state["usuario"]     = None       # username de login
+    st.session_state["nombre"]      = None        # nombre completo para trazabilidad
 
 def do_login(usuario, password):
-    u = USUARIOS.get(usuario)
-    if u and u["password"] == password:
-        st.session_state["autenticado"] = True
-        st.session_state["rol"]         = u["rol"]
-        st.session_state["usuario"]     = usuario
-        return True
-    return False
+    usuarios_df = cargar_usuarios()
+    fila = usuarios_df[usuarios_df["USUARIO"] == usuario]
+    if fila.empty:
+        return False
+    fila = fila.iloc[0]
+    if fila["PASSWORD"] != password:
+        return False
+    if fila["ACTIVO"] not in ("SI", "SÍ", "TRUE", "1", "ACTIVO", ""):
+        # Si la columna ACTIVO está vacía, se asume activo por compatibilidad
+        if fila["ACTIVO"] != "":
+            return False
+    st.session_state["autenticado"] = True
+    st.session_state["rol"]         = fila["ROL"]
+    st.session_state["usuario"]     = usuario
+    st.session_state["nombre"]      = fila["NOMBRE COMPLETO"] if fila["NOMBRE COMPLETO"] else usuario
+    return True
 
 def do_logout():
     st.session_state["autenticado"] = False
     st.session_state["rol"]         = None
     st.session_state["usuario"]     = None
+    st.session_state["nombre"]      = None
 
 if not st.session_state["autenticado"]:
 
@@ -580,13 +612,21 @@ if not st.session_state["autenticado"]:
 # ── Sidebar ───────────────────────────────────────────────────────────────────
 
 ROL = st.session_state["rol"]
+NOMBRE_USUARIO = st.session_state.get("nombre") or st.session_state.get("usuario") or ""
 
-VISTAS_REPORTES_ADMIN   = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
-VISTAS_REPORTES_CLIENTE = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
+VISTAS_REPORTES_ADMIN    = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
+VISTAS_REPORTES_OPERADOR = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
+VISTAS_REPORTES_CLIENTE  = ["📊  Dashboard", "🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
 
-reportes_opts    = VISTAS_REPORTES_ADMIN if ROL in ("administrador", "operario") else VISTAS_REPORTES_CLIENTE
-operaciones_opts = VISTAS_OPERACIONES    if ROL in ("administrador", "operario") else []
+if ROL == "administrador":
+    reportes_opts = VISTAS_REPORTES_ADMIN
+elif ROL == "operador":
+    reportes_opts = VISTAS_REPORTES_OPERADOR
+else:
+    reportes_opts = VISTAS_REPORTES_CLIENTE
+
+operaciones_opts = VISTAS_OPERACIONES if ROL in ("administrador", "operador") else []
 
 # ── Inicializar estado de navegación ──────────────────────────────────────────
 if "nav_vista"       not in st.session_state:
@@ -702,7 +742,7 @@ with st.sidebar:
               <div style="font-size:11px;color:#94a3b8;margin-bottom:2px">Sesión activa</div>
               <div style="display:flex;align-items:center;gap:8px">
                 <span style="font-size:13px;color:#e2e8f0;font-weight:600">
-                  👤 {st.session_state['usuario']}
+                  👤 {NOMBRE_USUARIO}
                 </span>
                 <span style="background:{rol_color};color:white;font-size:9px;
                              font-weight:700;padding:2px 8px;border-radius:10px;
@@ -1414,14 +1454,10 @@ elif vista == "📦  Stock":
     botones_descarga(display, "stock")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# VISTA: STOCK CON MERMA (solo admin)
+# VISTA: STOCK CON MERMA
 # ══════════════════════════════════════════════════════════════════════════════
 
 elif vista == "🔴  Stock con Merma":
-
-    if ROL != "administrador":
-        st.error("❌ Solo administradores pueden acceder a este módulo.")
-        st.stop()
 
     st.markdown("""
     <div class="wms-header">
@@ -2563,6 +2599,8 @@ elif vista == "🛒  Despacho Operativo":
                                         fila.append(cliente_str)
                                     elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
                                         fila.append(obs_str)
+                                    elif h_up == "USUARIO":
+                                        fila.append(NOMBRE_USUARIO)
                                     else:
                                         fila.append("")
                                 filas_a_insertar.append(fila)
@@ -2766,6 +2804,291 @@ elif vista == "📥  Carga Packing List":
         if st.session_state.get("pl_carga_ok"):
             st.session_state["pl_carga_ok"] = False
             st.success("✅ Packing List cargado correctamente. Los datos ya están en el sistema.")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: CAMBIO DE ESTADO CTN
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "📥  Ingreso Maquila":
+
+    st.markdown("""
+    <div class="wms-header">
+      <div style="font-size:32px">📥</div>
+      <div>
+        <h1>Ingreso Maquila</h1>
+        <p>Registra el ingreso de productos ya clasificados por estado, vencimiento y cantidad</p>
+      </div>
+      <span class="wms-badge">Ingreso</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    COLS_TRAZA_IM = ["FECHA", "SKU MASEF", "DESCRIPTION", "CTN", "ESTADO",
+                      "FECHA VCTO", "TOTAL UNIT", "GUIA", "TIPO DE MOVIMIENTO",
+                      "Tienda", "OBS", "USUARIO"]
+
+    modo_im = st.radio(
+        "¿Cómo deseas ingresar los productos?",
+        ["📂  Subir archivo (Excel/CSV)", "✍️  Formulario manual"],
+        horizontal=True,
+        key="im_modo"
+    )
+    st.divider()
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MODO 1: SUBIR ARCHIVO
+    # ════════════════════════════════════════════════════════════════════════
+    if modo_im == "📂  Subir archivo (Excel/CSV)":
+
+        def generar_plantilla_maquila() -> bytes:
+            ejemplo = {
+                "SKU MASEF":   ["1020002"],
+                "DESCRIPTION": ["CLIF BAR CHOCOLATE CAJA 5 BARRAS 340 GR"],
+                "CTN":         ["1000"],
+                "ESTADO":      ["DISPONIBLE"],
+                "FECHA VCTO":  ["8/3/2027"],
+                "TOTAL UNIT":  [30],
+                "OBS":         [""],
+            }
+            df_tmpl = pd.DataFrame(ejemplo)
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                df_tmpl.to_excel(w, index=False, sheet_name="IngresoMaquila")
+            return buf.getvalue()
+
+        col_dl, col_sp = st.columns([1, 3])
+        with col_dl:
+            st.download_button(
+                "📄  Descargar plantilla",
+                generar_plantilla_maquila(),
+                "plantilla_ingreso_maquila.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin:16px 0 8px'>"
+            "📂 Selecciona el archivo a cargar</div>",
+            unsafe_allow_html=True
+        )
+
+        archivo_im = st.file_uploader(
+            "Archivo de ingreso maquila",
+            type=["xlsx", "xls", "csv"],
+            label_visibility="collapsed",
+            key="im_uploader"
+        )
+
+        if archivo_im is not None:
+            try:
+                if archivo_im.name.endswith(".csv"):
+                    df_im = pd.read_csv(archivo_im)
+                else:
+                    df_im = pd.read_excel(archivo_im)
+            except Exception as e:
+                st.error(f"❌ No se pudo leer el archivo: {e}")
+                st.stop()
+
+            df_im.columns = [str(c).strip() for c in df_im.columns]
+
+            cols_requeridas = ["SKU MASEF", "CTN", "ESTADO", "FECHA VCTO", "TOTAL UNIT"]
+            faltantes = [c for c in cols_requeridas if c not in df_im.columns]
+            if faltantes:
+                st.error(f"❌ Faltan columnas obligatorias en el archivo: {', '.join(faltantes)}")
+                st.stop()
+
+            if "DESCRIPTION" not in df_im.columns:
+                df_im["DESCRIPTION"] = ""
+            if "OBS" not in df_im.columns:
+                df_im["OBS"] = ""
+
+            # Completar descripción desde el packing list si falta
+            desc_lookup = packing_df.set_index(col_sku_pk)[
+                next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
+            ].to_dict()
+            df_im["SKU MASEF"] = df_im["SKU MASEF"].astype(str).str.strip()
+            df_im["DESCRIPTION"] = df_im.apply(
+                lambda r: r["DESCRIPTION"] if str(r["DESCRIPTION"]).strip() not in ("", "nan")
+                else desc_lookup.get(r["SKU MASEF"], ""),
+                axis=1
+            )
+
+            df_im["TOTAL UNIT"] = pd.to_numeric(df_im["TOTAL UNIT"], errors="coerce").fillna(0).astype(int)
+            df_im["CTN"] = df_im["CTN"].astype(str).str.strip()
+            df_im["ESTADO"] = df_im["ESTADO"].astype(str).str.strip().str.upper()
+
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:700;color:#1e293b;margin:16px 0 8px'>"
+                f"Vista previa — {len(df_im)} registros</div>",
+                unsafe_allow_html=True
+            )
+            st.dataframe(
+                df_im[["SKU MASEF","DESCRIPTION","CTN","ESTADO","FECHA VCTO","TOTAL UNIT","OBS"]],
+                use_container_width=True, hide_index=True
+            )
+
+            total_unidades_im = int(df_im["TOTAL UNIT"].sum())
+            m1, m2 = st.columns(2)
+            m1.metric("Registros a ingresar", f"{len(df_im):,}")
+            m2.metric("Total unidades", f"{total_unidades_im:,}")
+
+            fecha_im = st.date_input("📅 Fecha de ingreso", value=date.today(), key="im_fecha_archivo")
+
+            if st.button("✅  Confirmar ingreso al sistema", use_container_width=True, type="primary"):
+                fecha_str_im = fecha_im.strftime("%d/%m/%Y")
+                filas_im = []
+                for _, r in df_im.iterrows():
+                    fv_raw = r["FECHA VCTO"]
+                    if pd.isna(fv_raw) or str(fv_raw).strip() == "":
+                        fv_str = ""
+                    elif hasattr(fv_raw, "strftime"):
+                        fv_str = fv_raw.strftime("%d/%m/%Y")
+                    else:
+                        fv_str = str(fv_raw).strip()
+
+                    filas_im.append([
+                        fecha_str_im, r["SKU MASEF"], r["DESCRIPTION"], r["CTN"],
+                        r["ESTADO"], fv_str, int(r["TOTAL UNIT"]), "", "INGRESO",
+                        "", str(r["OBS"]) if str(r["OBS"]) != "nan" else "", NOMBRE_USUARIO
+                    ])
+
+                try:
+                    client_im = get_client()
+                    ws_im     = client_im.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                    ws_im.append_rows(filas_im, value_input_option="USER_ENTERED")
+                    st.cache_data.clear()
+                    st.success(f"✅ Se ingresaron {len(filas_im)} registros correctamente ({total_unidades_im:,} unidades).")
+                except Exception as e:
+                    st.error(f"❌ Error al guardar en Google Sheets: {e}")
+
+    # ════════════════════════════════════════════════════════════════════════
+    # MODO 2: FORMULARIO MANUAL
+    # ════════════════════════════════════════════════════════════════════════
+    else:
+
+        for _k, _v in [
+            ("im_form_fecha",  date.today()),
+            ("im_form_items",  []),
+            ("im_form_exito",  False),
+        ]:
+            if _k not in st.session_state:
+                st.session_state[_k] = _v
+
+        st.markdown(
+            "<div style='font-size:11px;font-weight:700;color:#64748b;"
+            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+            "✍️ Agrega los productos uno por uno</div>",
+            unsafe_allow_html=True
+        )
+
+        skus_pl_im = sorted(packing_df[col_sku_pk].dropna().astype(str).unique().tolist())
+        desc_col_im = next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
+        sku_labels_im = {
+            s: f"{s} — {packing_df[packing_df[col_sku_pk].astype(str)==s][desc_col_im].iloc[0]}"
+            for s in skus_pl_im
+        }
+
+        with st.form("im_form_add_item", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_sku_im = st.selectbox("🔍 SKU", skus_pl_im, format_func=lambda s: sku_labels_im.get(s, s), key="im_inp_sku")
+            with c2:
+                inp_ctn_im = st.text_input("📦 CTN (contenedor)", key="im_inp_ctn")
+            c3, c4, c5 = st.columns(3)
+            with c3:
+                inp_estado_im = st.selectbox(
+                    "🏷️ Estado",
+                    ["DISPONIBLE","DISTRIBUIDOR","BANDEJAS","BANDEJAS MIXTAS","LATAS SUELTAS","DEVOLUCION","MERMA","GENERAL"],
+                    key="im_inp_estado"
+                )
+            with c4:
+                inp_fv_im = st.date_input("📅 Fecha de vencimiento", key="im_inp_fv")
+            with c5:
+                inp_cant_im = st.number_input("📦 Cantidad", min_value=1, value=1, step=1, key="im_inp_cant")
+            inp_obs_im = st.text_input("📝 Observación (opcional)", key="im_inp_obs")
+
+            btn_add_im = st.form_submit_button("➕  Agregar a la lista", use_container_width=True)
+
+        if btn_add_im:
+            if not inp_ctn_im.strip():
+                st.error("❌ Debes indicar el CTN.")
+            else:
+                desc_im = packing_df[packing_df[col_sku_pk].astype(str) == inp_sku_im][desc_col_im].iloc[0] \
+                    if (packing_df[col_sku_pk].astype(str) == inp_sku_im).any() else ""
+                st.session_state["im_form_items"].append({
+                    "SKU MASEF": inp_sku_im,
+                    "DESCRIPTION": desc_im,
+                    "CTN": inp_ctn_im.strip(),
+                    "ESTADO": inp_estado_im,
+                    "FECHA VCTO": inp_fv_im.strftime("%d/%m/%Y"),
+                    "TOTAL UNIT": int(inp_cant_im),
+                    "OBS": inp_obs_im.strip(),
+                })
+                st.rerun()
+
+        # ── Lista acumulada ────────────────────────────────────────────────────
+        if st.session_state["im_form_items"]:
+            st.divider()
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:700;color:#1e293b;margin-bottom:8px'>"
+                f"📋 Productos a ingresar — {len(st.session_state['im_form_items'])}</div>",
+                unsafe_allow_html=True
+            )
+
+            for i, item in enumerate(st.session_state["im_form_items"]):
+                col_info, col_del = st.columns([5, 1])
+                with col_info:
+                    st.markdown(
+                        f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
+                        f"padding:10px 14px;font-size:13px;line-height:1.6'>"
+                        f"<b>{item['SKU MASEF']}</b> — {item['DESCRIPTION']}<br>"
+                        f"CTN: {item['CTN']} &nbsp;|&nbsp; Estado: <b>{item['ESTADO']}</b> &nbsp;|&nbsp; "
+                        f"FV: {item['FECHA VCTO']} &nbsp;|&nbsp; "
+                        f"Cantidad: <span style='color:#059669;font-weight:700'>{item['TOTAL UNIT']:,}</span>"
+                        f"</div>", unsafe_allow_html=True
+                    )
+                with col_del:
+                    if st.button("🗑️", key=f"im_del_{i}", use_container_width=True):
+                        st.session_state["im_form_items"].pop(i)
+                        st.rerun()
+
+            total_im_form = sum(it["TOTAL UNIT"] for it in st.session_state["im_form_items"])
+            st.markdown(
+                f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:8px;"
+                f"padding:10px 16px;font-size:13px;color:#065f46;margin:12px 0'>"
+                f"<b>Total a ingresar: {total_im_form:,} unidades</b></div>",
+                unsafe_allow_html=True
+            )
+
+            fecha_im_form = st.date_input("📅 Fecha de ingreso", value=st.session_state["im_form_fecha"], key="im_fecha_form")
+
+            col_conf, col_clear = st.columns(2)
+            with col_clear:
+                if st.button("🗑️  Vaciar lista", use_container_width=True):
+                    st.session_state["im_form_items"] = []
+                    st.rerun()
+            with col_conf:
+                if st.button("✅  Confirmar ingreso al sistema", use_container_width=True, type="primary"):
+                    fecha_str_form = fecha_im_form.strftime("%d/%m/%Y")
+                    filas_form = []
+                    for item in st.session_state["im_form_items"]:
+                        filas_form.append([
+                            fecha_str_form, item["SKU MASEF"], item["DESCRIPTION"], item["CTN"],
+                            item["ESTADO"], item["FECHA VCTO"], int(item["TOTAL UNIT"]), "", "INGRESO",
+                            "", item["OBS"], NOMBRE_USUARIO
+                        ])
+                    try:
+                        client_im = get_client()
+                        ws_im     = client_im.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                        ws_im.append_rows(filas_form, value_input_option="USER_ENTERED")
+                        st.cache_data.clear()
+                        st.session_state["im_form_items"] = []
+                        st.success(f"✅ Se ingresaron {len(filas_form)} registros correctamente ({total_im_form:,} unidades).")
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar en Google Sheets: {e}")
+        else:
+            st.info("Agrega productos usando el formulario de arriba.")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3166,8 +3489,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de estado", use_container_width=True, type="primary", key="ce_confirm_est"):
                 obs = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], estado_dest,   fv,  cantidad, "", "AJUSTE", "", obs]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], estado_dest,   fv,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
@@ -3253,8 +3576,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de vencimiento", use_container_width=True, type="primary", key="ce_confirm_fv"):
                 obs = f"Cambio de vencimiento: {fv_vieja} → {fv_nueva}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_vieja, -cantidad, "", "AJUSTE", "", obs]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_nueva,  cantidad, "", "AJUSTE", "", obs]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_vieja, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_nueva,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
@@ -3343,8 +3666,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de contenedor", use_container_width=True, type="primary", key="ce_confirm_ctn"):
                 obs = f"Cambio de contenedor: {reg['CTN']} → {ctn_dest}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"],  reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], ctn_dest,    reg["ESTADO"], fv,  cantidad, "", "AJUSTE", "", obs]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"],  reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], ctn_dest,    reg["ESTADO"], fv,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
@@ -3673,6 +3996,8 @@ elif vista == "⚠️  Salida de Merma":
                                         fila.append(guia_sel)
                                     elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
                                         fila.append(obs_sel)
+                                    elif h_up == "USUARIO":
+                                        fila.append(NOMBRE_USUARIO)
                                     else:
                                         fila.append("")
                                 filas_merma.append(fila)
