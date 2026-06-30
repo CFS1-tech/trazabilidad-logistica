@@ -615,18 +615,18 @@ ROL = st.session_state["rol"]
 NOMBRE_USUARIO = st.session_state.get("nombre") or st.session_state.get("usuario") or ""
 
 VISTAS_REPORTES_ADMIN    = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
-VISTAS_REPORTES_OPERADOR = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
+VISTAS_REPORTES_OPERACIONES = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE  = ["📊  Dashboard", "🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
 
 if ROL == "administrador":
     reportes_opts = VISTAS_REPORTES_ADMIN
-elif ROL == "operador":
-    reportes_opts = VISTAS_REPORTES_OPERADOR
+elif ROL == "operaciones":
+    reportes_opts = VISTAS_REPORTES_OPERACIONES
 else:
     reportes_opts = VISTAS_REPORTES_CLIENTE
 
-operaciones_opts = VISTAS_OPERACIONES if ROL in ("administrador", "operador") else []
+operaciones_opts = VISTAS_OPERACIONES if ROL in ("administrador", "operaciones") else []
 
 # ── Inicializar estado de navegación ──────────────────────────────────────────
 if "nav_vista"       not in st.session_state:
