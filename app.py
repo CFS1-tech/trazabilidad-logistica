@@ -2827,6 +2827,73 @@ elif vista == "📥  Ingreso Maquila":
                       "FECHA VCTO", "TOTAL UNIT", "GUIA", "TIPO DE MOVIMIENTO",
                       "Tienda", "OBS", "USUARIO"]
 
+    # ── Selector de CTN + descarga de despachos previos ────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+        "📦 Consultar despachos previos de un contenedor</div>",
+        unsafe_allow_html=True
+    )
+
+    ctns_existentes_im = sorted(df["CTN"].dropna().astype(str).unique().tolist())
+    col_ctn_sel, col_btn_desc = st.columns([3, 1])
+    with col_ctn_sel:
+        ctn_consulta_im = st.selectbox(
+            "CTN a consultar",
+            ctns_existentes_im,
+            key="im_ctn_consulta",
+            label_visibility="collapsed"
+        )
+    with col_btn_desc:
+        descargar_despachos_im = st.button("📥  Descargar despachos", use_container_width=True)
+
+    if descargar_despachos_im:
+        salidas_ctn = df[
+            (df["CTN"].astype(str) == ctn_consulta_im)
+            & (df["TIPO DE MOVIMIENTO"].astype(str).str.strip().str.upper() == "SALIDA")
+        ].copy()
+
+        if salidas_ctn.empty:
+            st.warning(f"No hay registros de SALIDA para el CTN {ctn_consulta_im}.")
+        else:
+            salidas_ctn["FECHA_STR"] = pd.to_datetime(salidas_ctn["FECHA"]).dt.strftime("%d/%m/%Y")
+            salidas_ctn["CANTIDAD"]  = salidas_ctn["TOTAL UNIT"].abs()
+
+            pivot_desp = salidas_ctn.pivot_table(
+                index=["SKU MASEF", "DESCRIPTION"],
+                columns="FECHA_STR",
+                values="CANTIDAD",
+                aggfunc="sum",
+                fill_value=0
+            ).reset_index()
+
+            # Ordenar columnas de fecha cronológicamente
+            cols_fecha = [c for c in pivot_desp.columns if c not in ("SKU MASEF", "DESCRIPTION")]
+            cols_fecha_ordenadas = sorted(cols_fecha, key=lambda d: pd.to_datetime(d, dayfirst=True))
+            pivot_desp = pivot_desp[["SKU MASEF", "DESCRIPTION"] + cols_fecha_ordenadas]
+
+            # Columna total
+            pivot_desp["TOTAL DESPACHADO"] = pivot_desp[cols_fecha_ordenadas].sum(axis=1)
+
+            for c in cols_fecha_ordenadas + ["TOTAL DESPACHADO"]:
+                pivot_desp[c] = pivot_desp[c].astype(int)
+
+            buf_desp = io.BytesIO()
+            with pd.ExcelWriter(buf_desp, engine="openpyxl") as writer:
+                pivot_desp.to_excel(writer, index=False, sheet_name="Despachos")
+
+            st.success(f"✅ {len(pivot_desp)} SKUs con despachos encontrados para el CTN {ctn_consulta_im}.")
+            st.download_button(
+                "⬇️  Descargar Excel de despachos",
+                buf_desp.getvalue(),
+                f"despachos_ctn_{ctn_consulta_im}.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+            st.dataframe(pivot_desp, use_container_width=True, hide_index=True)
+
+    st.divider()
+
     modo_im = st.radio(
         "¿Cómo deseas ingresar los productos?",
         ["📂  Subir archivo (Excel/CSV)", "✍️  Formulario manual"],
