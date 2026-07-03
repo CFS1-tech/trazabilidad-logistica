@@ -2276,369 +2276,590 @@ elif vista == "🛒  Despacho Operativo":
     </div>
     """, unsafe_allow_html=True)
 
-    # ── Inicializar session state ──────────────────────────────────────────────
-    for _k, _v in [
-        ("desp_op_paso",    1),        # 1 = cabecera, 2 = búsqueda/carrito
-        ("desp_op_fecha",   date.today()),
-        ("desp_op_guia",    ""),
-        ("desp_op_cliente", ""),
-        ("desp_op_obs",     ""),
-        ("desp_op_items",   []),
-        ("desp_op_exito",   False),
-    ]:
-        if _k not in st.session_state:
-            st.session_state[_k] = _v
-
-    # ── Función reset total ────────────────────────────────────────────────────
-    def reset_desp_op():
-        st.session_state["desp_op_paso"]    = 1
-        st.session_state["desp_op_fecha"]   = date.today()
-        st.session_state["desp_op_guia"]    = ""
-        st.session_state["desp_op_cliente"] = ""
-        st.session_state["desp_op_obs"]     = ""
-        st.session_state["desp_op_items"]   = []
-        st.session_state["desp_op_exito"]   = False
-
-    # ── Función insertar en Sheets ─────────────────────────────────────────────
-    def insertar_salidas(filas: list) -> bool:
-        try:
-            client  = get_client()
-            sh      = client.open_by_key(st.secrets["spreadsheet_id"])
-            ws      = sh.worksheet(SHEET_NAME)
-            ws.append_rows(filas, value_input_option="USER_ENTERED")
-            return True
-        except Exception as e:
-            st.error(f"❌ Error al guardar en Google Sheets: {e}")
-            return False
+    # ── Selector manual / masivo ───────────────────────────────────────────────
+    modo_desp = st.radio(
+        "Modo de despacho",
+        ["✍️  Manual", "📂  Masivo (cargar Excel)"],
+        horizontal=True,
+        key="desp_modo"
+    )
+    st.divider()
 
     # ══════════════════════════════════════════════════════════════════════════
-    # PASO 1 — Datos del pedido
+    # MODO MASIVO
     # ══════════════════════════════════════════════════════════════════════════
-    if st.session_state["desp_op_paso"] == 1:
+    if modo_desp == "📂  Masivo (cargar Excel)":
 
-        st.markdown("""
-        <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
-                    padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
-          <b>Paso 1 de 2</b> — Completa los datos del despacho y luego continúa para agregar productos.
-        </div>
-        """, unsafe_allow_html=True)
+        # ── Plantilla descargable ─────────────────────────────────────────────
+        def generar_plantilla_despacho() -> bytes:
+            ejemplo = pd.DataFrame([{
+                "FECHA":              "27/06/2026",
+                "SKU MASEF":          "2020004",
+                "DESCRIPTION":        "COCA COLA CLASICA LT X 355 ML",
+                "CTN":                "12345",
+                "ESTADO":             "DISPONIBLE",
+                "FECHA VCTO":         "28/12/2026",
+                "TOTAL UNIT":         120,
+                "GUIA":               "EG07-3400",
+                "Tienda":             "CENCOSUD",
+                "OBS":                "",
+            }])
+            buf = io.BytesIO()
+            with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                ejemplo.to_excel(w, index=False, sheet_name="Despacho")
+            return buf.getvalue()
 
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#64748b;"
-            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-            "📋 Datos del despacho</div>",
-            unsafe_allow_html=True
+        st.download_button(
+            "📄  Descargar plantilla",
+            generar_plantilla_despacho(),
+            "plantilla_despacho.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
-        with st.form("form_desp_cabecera"):
-            c1, c2 = st.columns(2)
-            with c1:
-                inp_fecha   = st.date_input("📅 Fecha de salida",        value=st.session_state["desp_op_fecha"])
-                inp_cliente = st.text_input("👤 Cliente",                 value=st.session_state["desp_op_cliente"], placeholder="Nombre del cliente")
-            with c2:
-                inp_guia    = st.text_input("📄 N° de Guía / Referencia", value=st.session_state["desp_op_guia"],    placeholder="Ej: GR-2026-001")
-                inp_obs     = st.text_input("💬 Observación (opcional)",  value=st.session_state["desp_op_obs"],     placeholder="Ej: Pedido urgente")
+        archivo_desp = st.file_uploader(
+            "Sube el archivo Excel del despacho",
+            type=["xlsx","xls","csv"],
+            label_visibility="collapsed",
+            key="desp_masivo_file"
+        )
 
-            continuar = st.form_submit_button("➡️  Continuar — Agregar productos", use_container_width=True)
+        if archivo_desp:
+            try:
+                df_desp_m = pd.read_csv(archivo_desp) if archivo_desp.name.endswith(".csv") \
+                            else pd.read_excel(archivo_desp)
+            except Exception as e:
+                st.error(f"❌ No se pudo leer el archivo: {e}")
+                st.stop()
 
-        if continuar:
-            if not inp_guia.strip():
-                st.warning("⚠️ Debes ingresar un N° de Guía / Referencia.")
-            elif not inp_cliente.strip():
-                st.warning("⚠️ Debes ingresar el nombre del cliente.")
+            df_desp_m.columns = [str(c).strip() for c in df_desp_m.columns]
+
+            cols_req = ["SKU MASEF", "CTN", "ESTADO", "FECHA VCTO", "TOTAL UNIT"]
+            faltantes = [c for c in cols_req if c not in df_desp_m.columns]
+            if faltantes:
+                st.error(f"❌ Faltan columnas obligatorias: {', '.join(faltantes)}")
+                st.stop()
+
+            for c in ["DESCRIPTION","GUIA","Tienda","OBS","FECHA"]:
+                if c not in df_desp_m.columns:
+                    df_desp_m[c] = ""
+
+            df_desp_m["SKU MASEF"]   = df_desp_m["SKU MASEF"].astype(str).str.strip()
+            df_desp_m["CTN"]         = df_desp_m["CTN"].astype(str).str.strip()
+            df_desp_m["ESTADO"]      = df_desp_m["ESTADO"].astype(str).str.strip().str.upper()
+            df_desp_m["TOTAL UNIT"]  = pd.to_numeric(df_desp_m["TOTAL UNIT"], errors="coerce").fillna(0).astype(int)
+
+            # ── Calcular stock actual ─────────────────────────────────────────
+            stock_actual_m = calcular_stock(df, fecha_corte=date.today())
+
+            # ── Validar cada línea contra stock ───────────────────────────────
+            def get_stock(sku, ctn, estado):
+                mask = (
+                    (stock_actual_m["SKU MASEF"].astype(str) == sku) &
+                    (stock_actual_m["CTN"].astype(str) == ctn) &
+                    (stock_actual_m["ESTADO"].astype(str).str.upper() == estado)
+                )
+                hits = stock_actual_m[mask]
+                return int(hits["Stock"].sum()) if not hits.empty else 0
+
+            df_desp_m["STOCK ACTUAL"] = df_desp_m.apply(
+                lambda r: get_stock(r["SKU MASEF"], r["CTN"], r["ESTADO"]), axis=1
+            )
+            df_desp_m["DIFERENCIA"]   = df_desp_m["STOCK ACTUAL"] - df_desp_m["TOTAL UNIT"]
+            df_desp_m["ESTADO_VAL"]   = df_desp_m["DIFERENCIA"].apply(
+                lambda d: "✅ OK" if d >= 0 else "⚠️ Sin stock suficiente"
+            )
+
+            hay_errores = (df_desp_m["DIFERENCIA"] < 0).any()
+            total_lineas = len(df_desp_m)
+            lineas_ok    = int((df_desp_m["DIFERENCIA"] >= 0).sum())
+            lineas_mal   = total_lineas - lineas_ok
+
+            # ── Métricas ──────────────────────────────────────────────────────
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Total líneas", total_lineas)
+            m2.metric("✅ Con stock", lineas_ok)
+            m3.metric("⚠️ Sin stock suficiente", lineas_mal)
+
+            if hay_errores:
+                st.warning(
+                    "⚠️ Hay líneas sin stock suficiente (marcadas en rojo). "
+                    "Modifica la cantidad o elimínalas antes de confirmar."
+                )
+
+            # ── Tabla editable con validación ─────────────────────────────────
+            st.markdown(
+                "<div style='font-size:12px;color:#64748b;margin:12px 0 6px'>"
+                "Revisa y edita las líneas — puedes ajustar las cantidades en la columna <b>TOTAL UNIT</b>. "
+                "Las filas en rojo no tienen stock suficiente.</div>",
+                unsafe_allow_html=True
+            )
+
+            cols_show = ["SKU MASEF","DESCRIPTION","CTN","ESTADO","FECHA VCTO",
+                         "TOTAL UNIT","STOCK ACTUAL","DIFERENCIA","GUIA","Tienda","OBS","ESTADO_VAL"]
+            cols_show = [c for c in cols_show if c in df_desp_m.columns]
+
+            def color_val(row):
+                color = "background-color:#FFD7D7" if row["DIFERENCIA"] < 0 else "background-color:#D7F5DC"
+                return [color] * len(row)
+
+            edited_df = st.data_editor(
+                df_desp_m[cols_show].style.apply(color_val, axis=1),
+                use_container_width=True,
+                hide_index=True,
+                key="desp_masivo_editor"
+            )
+
+            # ── Stock detallado por SKU problemático ───────────────────────────
+            skus_problema = df_desp_m[df_desp_m["DIFERENCIA"] < 0]["SKU MASEF"].unique().tolist()
+            if skus_problema:
+                with st.expander(f"🔍 Ver stock actual de los {len(skus_problema)} SKU(s) con problema"):
+                    stock_detalle = stock_actual_m[
+                        stock_actual_m["SKU MASEF"].astype(str).isin(skus_problema)
+                    ][["SKU MASEF","DESCRIPTION","CTN","ESTADO","FECHA VCTO","Stock"]].copy()
+                    st.dataframe(stock_detalle, use_container_width=True, hide_index=True)
+
+            # ── Confirmar despacho ─────────────────────────────────────────────
+            st.divider()
+            if hay_errores:
+                st.error("❌ Corrige las líneas con stock insuficiente antes de confirmar.")
             else:
-                st.session_state["desp_op_fecha"]   = inp_fecha
-                st.session_state["desp_op_guia"]    = inp_guia.strip()
-                st.session_state["desp_op_cliente"] = inp_cliente.strip()
-                st.session_state["desp_op_obs"]     = inp_obs.strip()
-                st.session_state["desp_op_paso"]    = 2
-                st.rerun()
+                if st.button("✅  Confirmar despacho masivo", use_container_width=True, type="primary", key="desp_masivo_confirm"):
+                    try:
+                        client_m = get_client()
+                        ws_m     = client_m.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                        headers_m = ws_m.row_values(1)
+
+                        filas_m = []
+                        for _, row in df_desp_m.iterrows():
+                            # Fecha del registro
+                            fecha_raw = row.get("FECHA", "")
+                            if pd.isna(fecha_raw) or str(fecha_raw).strip() == "":
+                                fecha_str_m = date.today().strftime("%d/%m/%Y")
+                            elif hasattr(fecha_raw, "strftime"):
+                                fecha_str_m = fecha_raw.strftime("%d/%m/%Y")
+                            else:
+                                try:
+                                    fecha_str_m = pd.to_datetime(fecha_raw, dayfirst=True).strftime("%d/%m/%Y")
+                                except:
+                                    fecha_str_m = str(fecha_raw).strip()
+
+                            vcto_raw = row.get("FECHA VCTO", "")
+                            if pd.isna(vcto_raw) or str(vcto_raw).strip() == "":
+                                vcto_str_m = ""
+                            elif hasattr(vcto_raw, "strftime"):
+                                vcto_str_m = vcto_raw.strftime("%d/%m/%Y")
+                            else:
+                                try:
+                                    vcto_str_m = pd.to_datetime(vcto_raw, dayfirst=True).strftime("%d/%m/%Y")
+                                except:
+                                    vcto_str_m = str(vcto_raw).strip()
+
+                            fila_m = []
+                            for h in headers_m:
+                                h_up = h.upper().strip()
+                                if h_up == "FECHA":
+                                    fila_m.append(fecha_str_m)
+                                elif h_up in ("SKU MASEF","SKU"):
+                                    fila_m.append(row["SKU MASEF"])
+                                elif h_up in ("DESCRIPTION","DESCRIPCION","DESCRIPCIÓN"):
+                                    fila_m.append(str(row.get("DESCRIPTION","")))
+                                elif h_up == "CTN":
+                                    fila_m.append(row["CTN"])
+                                elif h_up == "ESTADO":
+                                    fila_m.append(row["ESTADO"])
+                                elif h_up in ("FECHA VCTO","FECHA VENCIMIENTO","VENCIMIENTO"):
+                                    fila_m.append(vcto_str_m)
+                                elif h_up in ("TOTAL UNIT","CANTIDAD","UNITS"):
+                                    fila_m.append(-abs(int(row["TOTAL UNIT"])))
+                                elif h_up in ("GUIA","GUÍA","N° GUIA","NUMERO GUIA"):
+                                    fila_m.append(str(row.get("GUIA","")))
+                                elif h_up in ("CLIENTE","CLIENT","TIENDA"):
+                                    fila_m.append(str(row.get("Tienda","")))
+                                elif h_up in ("TIPO DE MOVIMIENTO","TIPO MOVIMIENTO","MOVIMIENTO"):
+                                    fila_m.append("SALIDA")
+                                elif h_up in ("OBS","OBSERVACION","OBSERVACIONES","OBSERVACIÓN"):
+                                    fila_m.append(str(row.get("OBS","")) if str(row.get("OBS","")) != "nan" else "")
+                                elif h_up == "USUARIO":
+                                    fila_m.append(NOMBRE_USUARIO)
+                                else:
+                                    fila_m.append("")
+                            filas_m.append(fila_m)
+
+                        ws_m.append_rows(filas_m, value_input_option="USER_ENTERED")
+                        st.cache_data.clear()
+                        st.success(f"✅ Despacho masivo registrado — {len(filas_m)} líneas guardadas correctamente.")
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar: {e}")
 
     # ══════════════════════════════════════════════════════════════════════════
-    # PASO 2 — Búsqueda de productos + carrito
+    # MODO MANUAL
     # ══════════════════════════════════════════════════════════════════════════
     else:
 
-        # ── Banner resumen del pedido (fijo, siempre visible) ─────────────────
-        items_count = len(st.session_state["desp_op_items"])
-        total_u     = sum(i["cantidad"] for i in st.session_state["desp_op_items"])
-        st.markdown(f"""
-        <div style="background:#0d1b2a;border-radius:10px;padding:14px 20px;
-                    margin-bottom:16px;display:flex;gap:24px;align-items:center;
-                    box-shadow:0 2px 8px rgba(0,0,0,0.15)">
-          <div>
-            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Guía</div>
-            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_guia']}</div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Cliente</div>
-            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_cliente']}</div>
-          </div>
-          <div>
-            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Fecha</div>
-            <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_fecha'].strftime('%d/%m/%Y')}</div>
-          </div>
-          <div style="margin-left:auto;text-align:right">
-            <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Productos / Unidades</div>
-            <div style="font-size:16px;font-weight:700;color:#60a5fa">{items_count} ítems &nbsp;·&nbsp; {total_u:,} u.</div>
-          </div>
-        </div>
-        """, unsafe_allow_html=True)
 
-        # ── Calcular stock actual ─────────────────────────────────────────────
-        stock_op = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
-        pk_op    = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
-        stock_op["CTN"]       = stock_op["CTN"].astype(str).str.strip()
-        stock_op["SKU MASEF"] = stock_op["SKU MASEF"].astype(str).str.strip()
-        stock_op = stock_op.merge(pk_op, on=["CTN", "SKU MASEF"], how="left")
-        stock_op = _aplicar_presentacion_por_estado(stock_op)
+        # ── Inicializar session state ──────────────────────────────────────────────
+        for _k, _v in [
+            ("desp_op_paso",    1),
+            ("desp_op_fecha",   date.today()),
+            ("desp_op_guia",    ""),
+            ("desp_op_cliente", ""),
+            ("desp_op_obs",     ""),
+            ("desp_op_items",   []),
+            ("desp_op_exito",   False),
+        ]:
+            if _k not in st.session_state:
+                st.session_state[_k] = _v
 
-        # ── Buscador ──────────────────────────────────────────────────────────
-        st.markdown(
-            "<div style='font-size:11px;font-weight:700;color:#64748b;"
-            "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-            "🔎 Buscar y agregar productos</div>",
-            unsafe_allow_html=True
-        )
+        # ── Función reset total ────────────────────────────────────────────────────
+        def reset_desp_op():
+            st.session_state["desp_op_paso"]    = 1
+            st.session_state["desp_op_fecha"]   = date.today()
+            st.session_state["desp_op_guia"]    = ""
+            st.session_state["desp_op_cliente"] = ""
+            st.session_state["desp_op_obs"]     = ""
+            st.session_state["desp_op_items"]   = []
+            st.session_state["desp_op_exito"]   = False
 
-        buscar_op = st.text_input(
-            "",
-            placeholder="Escribe el código SKU o la descripción del producto…",
-            key="buscar_op",
-            label_visibility="collapsed"
-        )
+        # ── Función insertar en Sheets ─────────────────────────────────────────────
+        def insertar_salidas(filas: list) -> bool:
+            try:
+                client  = get_client()
+                sh      = client.open_by_key(st.secrets["spreadsheet_id"])
+                ws      = sh.worksheet(SHEET_NAME)
+                ws.append_rows(filas, value_input_option="USER_ENTERED")
+                return True
+            except Exception as e:
+                st.error(f"❌ Error al guardar en Google Sheets: {e}")
+                return False
 
-        # ── Resultados ────────────────────────────────────────────────────────
-        if buscar_op.strip():
-            mask_op = (
-                stock_op["SKU MASEF"].str.contains(buscar_op, case=False, na=False)
-                | stock_op["DESCRIPTION"].str.contains(buscar_op, case=False, na=False)
+        # ══════════════════════════════════════════════════════════════════════════
+        # PASO 1 — Datos del pedido
+        # ══════════════════════════════════════════════════════════════════════════
+        if st.session_state["desp_op_paso"] == 1:
+
+            st.markdown("""
+            <div style="background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;
+                        padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px">
+              <b>Paso 1 de 2</b> — Completa los datos del despacho y luego continúa para agregar productos.
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(
+                "<div style='font-size:11px;font-weight:700;color:#64748b;"
+                "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+                "📋 Datos del despacho</div>",
+                unsafe_allow_html=True
             )
-            resultados = stock_op[mask_op].copy()
 
-            if resultados.empty:
-                st.info("Sin resultados para esa búsqueda.")
-            else:
+            with st.form("form_desp_cabecera"):
+                c1, c2 = st.columns(2)
+                with c1:
+                    inp_fecha   = st.date_input("📅 Fecha de salida",        value=st.session_state["desp_op_fecha"])
+                    inp_cliente = st.text_input("👤 Cliente",                 value=st.session_state["desp_op_cliente"], placeholder="Nombre del cliente")
+                with c2:
+                    inp_guia    = st.text_input("📄 N° de Guía / Referencia", value=st.session_state["desp_op_guia"],    placeholder="Ej: GR-2026-001")
+                    inp_obs     = st.text_input("💬 Observación (opcional)",  value=st.session_state["desp_op_obs"],     placeholder="Ej: Pedido urgente")
+
+                continuar = st.form_submit_button("➡️  Continuar — Agregar productos", use_container_width=True)
+
+            if continuar:
+                if not inp_guia.strip():
+                    st.warning("⚠️ Debes ingresar un N° de Guía / Referencia.")
+                elif not inp_cliente.strip():
+                    st.warning("⚠️ Debes ingresar el nombre del cliente.")
+                else:
+                    st.session_state["desp_op_fecha"]   = inp_fecha
+                    st.session_state["desp_op_guia"]    = inp_guia.strip()
+                    st.session_state["desp_op_cliente"] = inp_cliente.strip()
+                    st.session_state["desp_op_obs"]     = inp_obs.strip()
+                    st.session_state["desp_op_paso"]    = 2
+                    st.rerun()
+
+        # ══════════════════════════════════════════════════════════════════════════
+        # PASO 2 — Búsqueda de productos + carrito
+        # ══════════════════════════════════════════════════════════════════════════
+        else:
+
+            # ── Banner resumen del pedido (fijo, siempre visible) ─────────────────
+            items_count = len(st.session_state["desp_op_items"])
+            total_u     = sum(i["cantidad"] for i in st.session_state["desp_op_items"])
+            st.markdown(f"""
+            <div style="background:#0d1b2a;border-radius:10px;padding:14px 20px;
+                        margin-bottom:16px;display:flex;gap:24px;align-items:center;
+                        box-shadow:0 2px 8px rgba(0,0,0,0.15)">
+              <div>
+                <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Guía</div>
+                <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_guia']}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Cliente</div>
+                <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_cliente']}</div>
+              </div>
+              <div>
+                <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Fecha</div>
+                <div style="font-size:14px;font-weight:700;color:#e2e8f0">{st.session_state['desp_op_fecha'].strftime('%d/%m/%Y')}</div>
+              </div>
+              <div style="margin-left:auto;text-align:right">
+                <div style="font-size:10px;color:#64748b;text-transform:uppercase;letter-spacing:.08em">Productos / Unidades</div>
+                <div style="font-size:16px;font-weight:700;color:#60a5fa">{items_count} ítems &nbsp;·&nbsp; {total_u:,} u.</div>
+              </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # ── Calcular stock actual ─────────────────────────────────────────────
+            stock_op = calcular_stock(df[df["ESTADO"] != "MERMA"], date.today())
+            pk_op    = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+            stock_op["CTN"]       = stock_op["CTN"].astype(str).str.strip()
+            stock_op["SKU MASEF"] = stock_op["SKU MASEF"].astype(str).str.strip()
+            stock_op = stock_op.merge(pk_op, on=["CTN", "SKU MASEF"], how="left")
+            stock_op = _aplicar_presentacion_por_estado(stock_op)
+
+            # ── Buscador ──────────────────────────────────────────────────────────
+            st.markdown(
+                "<div style='font-size:11px;font-weight:700;color:#64748b;"
+                "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+                "🔎 Buscar y agregar productos</div>",
+                unsafe_allow_html=True
+            )
+
+            buscar_op = st.text_input(
+                "",
+                placeholder="Escribe el código SKU o la descripción del producto…",
+                key="buscar_op",
+                label_visibility="collapsed"
+            )
+
+            # ── Resultados ────────────────────────────────────────────────────────
+            if buscar_op.strip():
+                mask_op = (
+                    stock_op["SKU MASEF"].str.contains(buscar_op, case=False, na=False)
+                    | stock_op["DESCRIPTION"].str.contains(buscar_op, case=False, na=False)
+                )
+                resultados = stock_op[mask_op].copy()
+
+                if resultados.empty:
+                    st.info("Sin resultados para esa búsqueda.")
+                else:
+                    st.markdown(
+                        f"<div style='font-size:12px;color:#64748b;margin-bottom:10px'>"
+                        f"{len(resultados)} resultado(s)</div>",
+                        unsafe_allow_html=True
+                    )
+
+                    for _, row in resultados.iterrows():
+                        sku        = str(row["SKU MASEF"])
+                        desc       = str(row.get("DESCRIPTION", ""))
+                        ctn        = str(row["CTN"])
+                        estado     = str(row["ESTADO"])
+                        stock_disp = int(row["Stock"])
+                        vcto       = str(row.get("FECHA VCTO", "")) or "—"
+                        prov       = str(row.get(col_proveedor_pk, "")) if col_proveedor_pk else ""
+                        item_key   = f"{sku}||{ctn}||{estado}||{vcto}"
+
+                        ya_en_carrito = any(
+                            it["key"] == item_key for it in st.session_state["desp_op_items"]
+                        )
+
+                        st.markdown(f"""
+                        <div class="desp-card">
+                          <div class="desp-sku">{sku}</div>
+                          <div class="desp-desc">{desc}</div>
+                          <div class="desp-meta">
+                            📦 CTN: <b>{ctn}</b> &nbsp;|&nbsp;
+                            🏷️ Estado: <b>{estado}</b> &nbsp;|&nbsp;
+                            📅 Vcto: <b>{vcto}</b>
+                            {"&nbsp;|&nbsp; 🏭 " + prov if prov and prov not in ("nan","") else ""}
+                          </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                        rc1, rc2, rc3 = st.columns([3, 1, 1])
+                        with rc1:
+                            st.markdown(
+                                f"<div class='desp-stock' style='margin-top:6px'>"
+                                f"✅ Stock disponible: <b>{stock_disp:,}</b> unidades</div>",
+                                unsafe_allow_html=True
+                            )
+                        with rc2:
+                            cantidad = st.number_input(
+                                "Cantidad", min_value=1, max_value=stock_disp,
+                                value=1, step=1,
+                                key=f"cant_{item_key}",
+                                label_visibility="collapsed"
+                            )
+                        with rc3:
+                            if ya_en_carrito:
+                                st.button("✅ Agregado", key=f"btn_{item_key}", disabled=True, use_container_width=True)
+                            else:
+                                if st.button("➕ Agregar", key=f"btn_{item_key}", use_container_width=True):
+                                    st.session_state["desp_op_items"].append({
+                                        "key":         item_key,
+                                        "SKU MASEF":   sku,
+                                        "DESCRIPTION": desc,
+                                        "CTN":         ctn,
+                                        "ESTADO":      estado,
+                                        "FECHA VCTO":  vcto if vcto != "—" else "",
+                                        "cantidad":    cantidad,
+                                    })
+                                    st.rerun()
+
+            # ── Carrito ───────────────────────────────────────────────────────────
+            if st.session_state["desp_op_items"]:
+                st.divider()
                 st.markdown(
-                    f"<div style='font-size:12px;color:#64748b;margin-bottom:10px'>"
-                    f"{len(resultados)} resultado(s)</div>",
+                    f"<div style='font-size:11px;font-weight:700;color:#64748b;"
+                    f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+                    f"🛒 Carrito — {len(st.session_state['desp_op_items'])} ítem(s)</div>",
                     unsafe_allow_html=True
                 )
 
-                for _, row in resultados.iterrows():
-                    sku        = str(row["SKU MASEF"])
-                    desc       = str(row.get("DESCRIPTION", ""))
-                    ctn        = str(row["CTN"])
-                    estado     = str(row["ESTADO"])
-                    stock_disp = int(row["Stock"])
-                    vcto       = str(row.get("FECHA VCTO", "")) or "—"
-                    prov       = str(row.get(col_proveedor_pk, "")) if col_proveedor_pk else ""
-                    item_key   = f"{sku}||{ctn}||{estado}||{vcto}"
+                total_units = 0
+                to_remove   = None
 
-                    ya_en_carrito = any(
-                        it["key"] == item_key for it in st.session_state["desp_op_items"]
-                    )
-
-                    st.markdown(f"""
-                    <div class="desp-card">
-                      <div class="desp-sku">{sku}</div>
-                      <div class="desp-desc">{desc}</div>
-                      <div class="desp-meta">
-                        📦 CTN: <b>{ctn}</b> &nbsp;|&nbsp;
-                        🏷️ Estado: <b>{estado}</b> &nbsp;|&nbsp;
-                        📅 Vcto: <b>{vcto}</b>
-                        {"&nbsp;|&nbsp; 🏭 " + prov if prov and prov not in ("nan","") else ""}
-                      </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                    rc1, rc2, rc3 = st.columns([3, 1, 1])
-                    with rc1:
+                for idx, item in enumerate(st.session_state["desp_op_items"]):
+                    ci1, ci2, ci3, ci4 = st.columns([4, 1, 1, 1])
+                    with ci1:
                         st.markdown(
-                            f"<div class='desp-stock' style='margin-top:6px'>"
-                            f"✅ Stock disponible: <b>{stock_disp:,}</b> unidades</div>",
+                            f"<div style='font-size:13px;font-weight:600;color:#0f172a'>{item['DESCRIPTION']}</div>"
+                            f"<div style='font-size:11px;color:#64748b'>"
+                            f"{item['SKU MASEF']} — CTN {item['CTN']} — {item['ESTADO']}</div>",
                             unsafe_allow_html=True
                         )
-                    with rc2:
-                        cantidad = st.number_input(
-                            "Cantidad", min_value=1, max_value=stock_disp,
-                            value=1, step=1,
-                            key=f"cant_{item_key}",
-                            label_visibility="collapsed"
+                    with ci2:
+                        nueva_cant = st.number_input(
+                            "Cant.", min_value=1, value=item["cantidad"], step=1,
+                            key=f"edit_cant_{idx}", label_visibility="collapsed"
                         )
-                    with rc3:
-                        if ya_en_carrito:
-                            st.button("✅ Agregado", key=f"btn_{item_key}", disabled=True, use_container_width=True)
+                        st.session_state["desp_op_items"][idx]["cantidad"] = nueva_cant
+                    with ci3:
+                        st.markdown(
+                            f"<div style='font-size:13px;font-weight:700;color:#185FA5;margin-top:6px'>"
+                            f"−{nueva_cant:,} u.</div>",
+                            unsafe_allow_html=True
+                        )
+                    with ci4:
+                        if st.button("🗑️", key=f"rm_{idx}", help="Quitar", use_container_width=True):
+                            to_remove = idx
+                    total_units += nueva_cant
+
+                if to_remove is not None:
+                    st.session_state["desp_op_items"].pop(to_remove)
+                    st.rerun()
+
+                st.markdown(
+                    f"<div style='text-align:right;font-size:15px;font-weight:700;color:#0f172a;"
+                    f"background:#f8fafc;border-radius:8px;padding:10px 16px;margin:8px 0'>"
+                    f"Total a despachar: {total_units:,} unidades</div>",
+                    unsafe_allow_html=True
+                )
+
+                # ── Botones acción ────────────────────────────────────────────────
+                col_conf, col_volver, col_can = st.columns([3, 1, 1])
+
+                with col_conf:
+                    if st.button("✅  Confirmar y registrar salida", use_container_width=True, type="primary"):
+
+                        # Guard: evitar doble inserción
+                        if st.session_state.get("desp_op_procesando"):
+                            st.warning("⏳ Ya se está procesando, espera un momento.")
                         else:
-                            if st.button("➕ Agregar", key=f"btn_{item_key}", use_container_width=True):
-                                st.session_state["desp_op_items"].append({
-                                    "key":         item_key,
-                                    "SKU MASEF":   sku,
-                                    "DESCRIPTION": desc,
-                                    "CTN":         ctn,
-                                    "ESTADO":      estado,
-                                    "FECHA VCTO":  vcto if vcto != "—" else "",
-                                    "cantidad":    cantidad,
-                                })
-                                st.rerun()
+                            st.session_state["desp_op_procesando"] = True
 
-        # ── Carrito ───────────────────────────────────────────────────────────
-        if st.session_state["desp_op_items"]:
-            st.divider()
-            st.markdown(
-                f"<div style='font-size:11px;font-weight:700;color:#64748b;"
-                f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
-                f"🛒 Carrito — {len(st.session_state['desp_op_items'])} ítem(s)</div>",
-                unsafe_allow_html=True
-            )
+                            try:
+                                client_tmp = get_client()
+                                sh_tmp     = client_tmp.open_by_key(st.secrets["spreadsheet_id"])
+                                ws_tmp     = sh_tmp.worksheet(SHEET_NAME)
+                                headers    = ws_tmp.row_values(1)
+                            except Exception as e:
+                                st.error(f"❌ No se pudo leer la hoja: {e}")
+                                headers = []
+                                st.session_state["desp_op_procesando"] = False
 
-            total_units = 0
-            to_remove   = None
+                            if headers:
+                                # FECHA siempre DD/MM/YYYY como texto plano
+                                fecha_str   = st.session_state["desp_op_fecha"].strftime("%d/%m/%Y")
+                                guia_str    = st.session_state["desp_op_guia"]
+                                cliente_str = st.session_state["desp_op_cliente"]
+                                obs_str     = st.session_state["desp_op_obs"]
+                                filas_a_insertar = []
 
-            for idx, item in enumerate(st.session_state["desp_op_items"]):
-                ci1, ci2, ci3, ci4 = st.columns([4, 1, 1, 1])
-                with ci1:
-                    st.markdown(
-                        f"<div style='font-size:13px;font-weight:600;color:#0f172a'>{item['DESCRIPTION']}</div>"
-                        f"<div style='font-size:11px;color:#64748b'>"
-                        f"{item['SKU MASEF']} — CTN {item['CTN']} — {item['ESTADO']}</div>",
-                        unsafe_allow_html=True
-                    )
-                with ci2:
-                    nueva_cant = st.number_input(
-                        "Cant.", min_value=1, value=item["cantidad"], step=1,
-                        key=f"edit_cant_{idx}", label_visibility="collapsed"
-                    )
-                    st.session_state["desp_op_items"][idx]["cantidad"] = nueva_cant
-                with ci3:
-                    st.markdown(
-                        f"<div style='font-size:13px;font-weight:700;color:#185FA5;margin-top:6px'>"
-                        f"−{nueva_cant:,} u.</div>",
-                        unsafe_allow_html=True
-                    )
-                with ci4:
-                    if st.button("🗑️", key=f"rm_{idx}", help="Quitar", use_container_width=True):
-                        to_remove = idx
-                total_units += nueva_cant
-
-            if to_remove is not None:
-                st.session_state["desp_op_items"].pop(to_remove)
-                st.rerun()
-
-            st.markdown(
-                f"<div style='text-align:right;font-size:15px;font-weight:700;color:#0f172a;"
-                f"background:#f8fafc;border-radius:8px;padding:10px 16px;margin:8px 0'>"
-                f"Total a despachar: {total_units:,} unidades</div>",
-                unsafe_allow_html=True
-            )
-
-            # ── Botones acción ────────────────────────────────────────────────
-            col_conf, col_volver, col_can = st.columns([3, 1, 1])
-
-            with col_conf:
-                if st.button("✅  Confirmar y registrar salida", use_container_width=True, type="primary"):
-
-                    # Guard: evitar doble inserción
-                    if st.session_state.get("desp_op_procesando"):
-                        st.warning("⏳ Ya se está procesando, espera un momento.")
-                    else:
-                        st.session_state["desp_op_procesando"] = True
-
-                        try:
-                            client_tmp = get_client()
-                            sh_tmp     = client_tmp.open_by_key(st.secrets["spreadsheet_id"])
-                            ws_tmp     = sh_tmp.worksheet(SHEET_NAME)
-                            headers    = ws_tmp.row_values(1)
-                        except Exception as e:
-                            st.error(f"❌ No se pudo leer la hoja: {e}")
-                            headers = []
-                            st.session_state["desp_op_procesando"] = False
-
-                        if headers:
-                            # FECHA siempre DD/MM/YYYY como texto plano
-                            fecha_str   = st.session_state["desp_op_fecha"].strftime("%d/%m/%Y")
-                            guia_str    = st.session_state["desp_op_guia"]
-                            cliente_str = st.session_state["desp_op_cliente"]
-                            obs_str     = st.session_state["desp_op_obs"]
-                            filas_a_insertar = []
-
-                            for item in st.session_state["desp_op_items"]:
-                                # Normalizar FECHA VCTO a DD/MM/YYYY
-                                vcto_raw = item.get("FECHA VCTO", "")
-                                if vcto_raw and vcto_raw not in ("", "—", "nan"):
-                                    try:
-                                        vcto_str = pd.to_datetime(vcto_raw, dayfirst=False, errors="coerce")
-                                        vcto_str = vcto_str.strftime("%d/%m/%Y") if not pd.isna(vcto_str) else vcto_raw
-                                    except:
-                                        vcto_str = vcto_raw
-                                else:
-                                    vcto_str = ""
-
-                                fila = []
-                                for h in headers:
-                                    h_up = h.upper().strip()
-                                    if h_up == "FECHA":
-                                        fila.append(fecha_str)
-                                    elif h_up == "CTN":
-                                        fila.append(item["CTN"])
-                                    elif h_up in ("SKU MASEF", "SKU"):
-                                        fila.append(item["SKU MASEF"])
-                                    elif h_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
-                                        fila.append(item["DESCRIPTION"])
-                                    elif h_up == "ESTADO":
-                                        fila.append(item["ESTADO"])
-                                    elif h_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO"):
-                                        fila.append(vcto_str)
-                                    elif h_up in ("TIPO DE MOVIMIENTO", "TIPO MOVIMIENTO", "MOVIMIENTO"):
-                                        fila.append("SALIDA")
-                                    elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
-                                        fila.append(-abs(item["cantidad"]))
-                                    elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
-                                        fila.append(guia_str)
-                                    elif h_up in ("CLIENTE", "CLIENT", "TIENDA"):
-                                        fila.append(cliente_str)
-                                    elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
-                                        fila.append(obs_str)
-                                    elif h_up == "USUARIO":
-                                        fila.append(NOMBRE_USUARIO)
+                                for item in st.session_state["desp_op_items"]:
+                                    # Normalizar FECHA VCTO a DD/MM/YYYY
+                                    vcto_raw = item.get("FECHA VCTO", "")
+                                    if vcto_raw and vcto_raw not in ("", "—", "nan"):
+                                        try:
+                                            vcto_str = pd.to_datetime(vcto_raw, dayfirst=False, errors="coerce")
+                                            vcto_str = vcto_str.strftime("%d/%m/%Y") if not pd.isna(vcto_str) else vcto_raw
+                                        except:
+                                            vcto_str = vcto_raw
                                     else:
-                                        fila.append("")
-                                filas_a_insertar.append(fila)
+                                        vcto_str = ""
 
-                            ok = insertar_salidas(filas_a_insertar)
-                            st.session_state["desp_op_procesando"] = False
-                            if ok:
-                                st.cache_data.clear()
-                                reset_desp_op()
-                                st.session_state["desp_op_exito"] = True
-                                st.rerun()
+                                    fila = []
+                                    for h in headers:
+                                        h_up = h.upper().strip()
+                                        if h_up == "FECHA":
+                                            fila.append(fecha_str)
+                                        elif h_up == "CTN":
+                                            fila.append(item["CTN"])
+                                        elif h_up in ("SKU MASEF", "SKU"):
+                                            fila.append(item["SKU MASEF"])
+                                        elif h_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
+                                            fila.append(item["DESCRIPTION"])
+                                        elif h_up == "ESTADO":
+                                            fila.append(item["ESTADO"])
+                                        elif h_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO"):
+                                            fila.append(vcto_str)
+                                        elif h_up in ("TIPO DE MOVIMIENTO", "TIPO MOVIMIENTO", "MOVIMIENTO"):
+                                            fila.append("SALIDA")
+                                        elif h_up in ("TOTAL UNIT", "CANTIDAD", "UNITS"):
+                                            fila.append(-abs(item["cantidad"]))
+                                        elif h_up in ("GUIA", "GUÍA", "N° GUIA", "NUMERO GUIA"):
+                                            fila.append(guia_str)
+                                        elif h_up in ("CLIENTE", "CLIENT", "TIENDA"):
+                                            fila.append(cliente_str)
+                                        elif h_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
+                                            fila.append(obs_str)
+                                        elif h_up == "USUARIO":
+                                            fila.append(NOMBRE_USUARIO)
+                                        else:
+                                            fila.append("")
+                                    filas_a_insertar.append(fila)
 
-            with col_volver:
-                if st.button("✏️  Editar cabecera", use_container_width=True):
+                                ok = insertar_salidas(filas_a_insertar)
+                                st.session_state["desp_op_procesando"] = False
+                                if ok:
+                                    st.cache_data.clear()
+                                    reset_desp_op()
+                                    st.session_state["desp_op_exito"] = True
+                                    st.rerun()
+
+                with col_volver:
+                    if st.button("✏️  Editar cabecera", use_container_width=True):
+                        st.session_state["desp_op_paso"] = 1
+                        st.rerun()
+
+                with col_can:
+                    if st.button("🗑️  Cancelar todo", use_container_width=True):
+                        reset_desp_op()
+                        st.rerun()
+
+            else:
+                # Sin ítems en carrito — opción de volver
+                st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                if st.button("← Volver a datos del despacho", use_container_width=False):
                     st.session_state["desp_op_paso"] = 1
                     st.rerun()
 
-            with col_can:
-                if st.button("🗑️  Cancelar todo", use_container_width=True):
-                    reset_desp_op()
-                    st.rerun()
-
-        else:
-            # Sin ítems en carrito — opción de volver
-            st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-            if st.button("← Volver a datos del despacho", use_container_width=False):
-                st.session_state["desp_op_paso"] = 1
-                st.rerun()
-
-    # ── Mensaje de éxito (se muestra en Paso 1, tras el reset) ────────────────
-    if st.session_state.get("desp_op_exito") and st.session_state["desp_op_paso"] == 1:
-        st.session_state["desp_op_exito"] = False
-        st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
+        # ── Mensaje de éxito (se muestra en Paso 1, tras el reset) ────────────────
+        if st.session_state.get("desp_op_exito") and st.session_state["desp_op_paso"] == 1:
+            st.session_state["desp_op_exito"] = False
+            st.success("✅ Salida registrada correctamente. El stock ha sido actualizado.")
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# VISTA: CARGA PACKING LIST
-# ══════════════════════════════════════════════════════════════════════════════
+    # ══════════════════════════════════════════════════════════════════════════════
+    # VISTA: CARGA PACKING LIST
+    # ══════════════════════════════════════════════════════════════════════════════
 
 elif vista == "📥  Carga Packing List":
 
