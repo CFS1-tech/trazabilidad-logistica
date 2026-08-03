@@ -884,6 +884,24 @@ col_proveedor_pk = next(
     None
 )
 
+
+def _fecha_ingreso_ctn(ctn: str):
+    """Devuelve la fecha de ingreso (FECH ING) del CTN desde el packing list,
+    o None si no existe."""
+    col_fech = next((c for c in packing_df.columns if "FECH" in c.upper()), None)
+    if not col_fech:
+        return None
+    filas = packing_df[packing_df[col_ctn_pk].astype(str).str.strip() == ctn.strip()]
+    if filas.empty:
+        return None
+    val = filas.iloc[0][col_fech]
+    if pd.isna(val) or str(val).strip() == "":
+        return None
+    try:
+        return pd.to_datetime(val, dayfirst=True).date()
+    except:
+        return None
+
 # ── Tabla auxiliar del packing list: CTN + SKU → extras ──────────────────────
 def _build_pk_aux(cols_extra: list) -> pd.DataFrame:
     """Construye un DF del packing list con las columnas extra solicitadas."""
@@ -3128,6 +3146,9 @@ elif vista == "📦  Recepción Operativa":
                     pivot_r["TOTAL DESPACHADO"] = pivot_r[cols_f].sum(axis=1)
                     for c in cols_f + ["TOTAL DESPACHADO"]:
                         pivot_r[c] = pivot_r[c].astype(int)
+                    # Agregar FECH ING del packing list como primera columna
+                    fecha_pl_r = _fecha_ingreso_ctn(ctn_consulta_r)
+                    pivot_r.insert(0, "FECH ING (PL)", fecha_pl_r.strftime("%d/%m/%Y") if fecha_pl_r else "—")
                     buf_r = io.BytesIO()
                     with pd.ExcelWriter(buf_r, engine="openpyxl") as wr:
                         pivot_r.to_excel(wr, index=False, sheet_name="Despachos")
@@ -3216,28 +3237,51 @@ elif vista == "📦  Recepción Operativa":
                 if st.session_state["im_form_paso"] == 1:
                     st.markdown("""<div style="background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;
                         padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px">
-                        <b>Paso 1 de 2</b> — Indica la fecha de ingreso y el contenedor.</div>""",
+                        <b>Paso 1 de 2</b> — Indica el contenedor. La fecha se tomará del Packing List automáticamente.</div>""",
                         unsafe_allow_html=True)
                     with st.form("recep_im_cab"):
-                        c1r, c2r = st.columns(2)
-                        with c1r: inp_fch = st.date_input("📅 Fecha", value=st.session_state["im_form_fecha"])
-                        with c2r: inp_ctn_r = st.text_input("📦 CTN", value=st.session_state["im_form_ctn"])
+                        inp_ctn_r = st.text_input("📦 CTN", value=st.session_state["im_form_ctn"])
                         btn_cont = st.form_submit_button("➡️  Continuar", use_container_width=True, type="primary")
                     if btn_cont:
-                        if not inp_ctn_r.strip(): st.error("❌ Debes indicar el CTN.")
+                        if not inp_ctn_r.strip():
+                            st.error("❌ Debes indicar el CTN.")
                         else:
-                            st.session_state["im_form_fecha"] = inp_fch
-                            st.session_state["im_form_ctn"]   = inp_ctn_r.strip()
-                            st.session_state["im_form_paso"]  = 2; st.rerun()
+                            # Buscar fecha en PL; si no existe, pedir manualmente
+                            fecha_pl = _fecha_ingreso_ctn(inp_ctn_r.strip())
+                            if fecha_pl:
+                                st.session_state["im_form_fecha"] = fecha_pl
+                                st.session_state["im_form_ctn"]   = inp_ctn_r.strip()
+                                st.session_state["im_form_paso"]  = 2
+                                st.rerun()
+                            else:
+                                st.session_state["im_form_ctn"]  = inp_ctn_r.strip()
+                                st.session_state["im_form_paso"] = "1b"
+                                st.rerun()
+
+                elif st.session_state["im_form_paso"] == "1b":
+                    # CTN no existe en PL — pedir fecha manualmente
+                    st.warning(f"⚠️ El CTN **{st.session_state['im_form_ctn']}** no tiene fecha en el Packing List. Ingresa la fecha manualmente.")
+                    with st.form("recep_im_cab_manual"):
+                        inp_fch_m = st.date_input("📅 Fecha de ingreso", value=date.today())
+                        c_ok, c_back = st.columns(2)
+                        with c_ok:   btn_ok_m   = st.form_submit_button("➡️  Continuar", use_container_width=True, type="primary")
+                        with c_back: btn_back_m = st.form_submit_button("⬅️  Volver",   use_container_width=True)
+                    if btn_back_m:
+                        st.session_state["im_form_paso"] = 1; st.rerun()
+                    if btn_ok_m:
+                        st.session_state["im_form_fecha"] = inp_fch_m
+                        st.session_state["im_form_paso"]  = 2; st.rerun()
 
                 elif st.session_state["im_form_paso"] == 2:
                     col_h2, col_volver2 = st.columns([4,1])
                     with col_h2:
+                        fecha_origen = "Packing List" if _fecha_ingreso_ctn(st.session_state['im_form_ctn']) else "manual"
                         st.markdown(
                             f"<div style='background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;"
                             f"padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px'>"
                             f"<b>Paso 2 de 2</b> — CTN: <b>{st.session_state['im_form_ctn']}</b> | "
-                            f"Fecha: <b>{st.session_state['im_form_fecha'].strftime('%d/%m/%Y')}</b></div>",
+                            f"Fecha: <b>{st.session_state['im_form_fecha'].strftime('%d/%m/%Y')}</b> "
+                            f"<span style='font-size:11px;color:#059669'>({fecha_origen})</span></div>",
                             unsafe_allow_html=True)
                     with col_volver2:
                         if st.button("← Volver", use_container_width=True, key="recep_im_volver"):
@@ -3570,6 +3614,10 @@ elif vista == "📥  Ingreso Maquila":
             cols_fecha = [c for c in pivot_desp.columns if c not in ("SKU MASEF", "DESCRIPTION")]
             cols_fecha_ordenadas = sorted(cols_fecha, key=lambda d: pd.to_datetime(d, dayfirst=True))
             pivot_desp = pivot_desp[["SKU MASEF", "DESCRIPTION"] + cols_fecha_ordenadas]
+
+            # Agregar FECH ING del packing list como primera columna
+            fecha_pl_im = _fecha_ingreso_ctn(ctn_consulta_im)
+            pivot_desp.insert(0, "FECH ING (PL)", fecha_pl_im.strftime("%d/%m/%Y") if fecha_pl_im else "—")
 
             # Columna total
             pivot_desp["TOTAL DESPACHADO"] = pivot_desp[cols_fecha_ordenadas].sum(axis=1)
