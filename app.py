@@ -275,6 +275,45 @@ def cargar_datos() -> pd.DataFrame:
 
     df = _con_reintentos(_cargar)
 
+    # ── Normalizar nombres de columnas clave ──────────────────────────────────
+    # Mapea variaciones comunes → nombre canónico esperado por el código
+    col_rename = {}
+    for col in df.columns:
+        col_clean = col.strip()
+        col_up    = col_clean.upper()
+        if col_up in ("TIPO MOVIMIENTO", "TIPO DE MOVIMIENTO", "TIPOMOVIMIENTO",
+                      "TIPO_MOVIMIENTO", "O DE MOVIMIEN", "TIPO MOV"):
+            col_rename[col] = "TIPO DE MOVIMIENTO"
+        elif col_up in ("SKU", "SKU MASEF", "SKUMASEF"):
+            col_rename[col] = "SKU MASEF"
+        elif col_up in ("DESCRIPTION", "DESCRIPCION", "DESCRIPCIÓN"):
+            col_rename[col] = "DESCRIPTION"
+        elif col_up in ("GUIA", "GUÍA", "N° GUIA", "NRO GUIA", "NUMERO GUIA"):
+            col_rename[col] = "GUIA"
+        elif col_up in ("TIENDA", "CLIENTE", "STORE"):
+            if col_rename.get(col) is None and "Tienda" not in df.columns:
+                col_rename[col] = "Tienda"
+        elif col_up in ("OBS", "OBSERVACION", "OBSERVACIONES", "OBSERVACIÓN"):
+            col_rename[col] = "OBS"
+        elif col_up in ("FECHA VCTO", "FECHA VENCIMIENTO", "VENCIMIENTO", "FV"):
+            col_rename[col] = "FECHA VCTO"
+        elif col_up in ("TOTAL UNIT", "CANTIDAD", "UNITS", "TOTAL_UNIT"):
+            col_rename[col] = "TOTAL UNIT"
+        elif col_up in ("USUARIO", "USER", "OPERADOR"):
+            col_rename[col] = "USUARIO"
+        # También limpiar espacios en los nombres que no se renombran
+        elif col != col_clean:
+            col_rename[col] = col_clean
+
+    if col_rename:
+        df = df.rename(columns=col_rename)
+
+    # ── Asegurar columnas mínimas existan ─────────────────────────────────────
+    for col_req in ["TIPO DE MOVIMIENTO", "GUIA", "ESTADO", "CTN", "SKU MASEF",
+                    "DESCRIPTION", "FECHA VCTO", "TOTAL UNIT", "Tienda", "OBS", "USUARIO"]:
+        if col_req not in df.columns:
+            df[col_req] = ""
+
     df["FECHA"]      = _parse_fecha_robusta(df["FECHA"].astype(str))
     df["FECHA VCTO"] = _parse_fecha_robusta(df["FECHA VCTO"].astype(str))
 
@@ -283,7 +322,7 @@ def cargar_datos() -> pd.DataFrame:
     ).fillna(0).astype(int)
 
     df["SKU MASEF"] = df["SKU MASEF"].astype(str)
-    df["CTN"] = df["CTN"].astype(str)
+    df["CTN"]       = df["CTN"].astype(str)
 
     return df.dropna(subset=["FECHA"])
 
@@ -617,7 +656,7 @@ NOMBRE_USUARIO = st.session_state.get("nombre") or st.session_state.get("usuario
 VISTAS_REPORTES_ADMIN    = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
 VISTAS_REPORTES_OPERADOR = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE  = ["📊  Dashboard", "🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚠️  Salida de Merma"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚖️  Ajuste de Stock", "⚠️  Salida de Merma"]
 
 if ROL == "administrador":
     reportes_opts = VISTAS_REPORTES_ADMIN
@@ -2299,7 +2338,7 @@ elif vista == "🛒  Despacho Operativo":
                 "CTN":                "12345",
                 "ESTADO":             "DISPONIBLE",
                 "FECHA VCTO":         "28/12/2026",
-                "TOTAL UNIT":         120,
+                "TOTAL UNIT":         -120,
                 "GUIA":               "EG07-3400",
                 "Tienda":             "CENCOSUD",
                 "OBS":                "",
@@ -4032,6 +4071,295 @@ elif vista == "🔀  Cambios":
         st.success("✅ Cambio registrado correctamente.")
         if st.button("🔀  Hacer otro cambio", use_container_width=True):
             reset_ce(); st.rerun()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# VISTA: AJUSTE DE STOCK
+# ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "⚖️  Ajuste de Stock":
+
+    st.markdown("""
+    <div class="wms-header">
+      <div style="font-size:32px">⚖️</div>
+      <div>
+        <h1>Ajuste de Stock</h1>
+        <p>Aumentar o disminuir unidades de un registro — genera movimiento de AJUSTE</p>
+      </div>
+      <span class="wms-badge">Operación</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Session state ──────────────────────────────────────────────────────────
+    for _k, _v in [
+        ("aj_paso",        1),
+        ("aj_fecha",       date.today()),
+        ("aj_sku_sel",     None),
+        ("aj_df_snap",     []),
+        ("aj_registro",    None),
+        ("aj_tipo",        "Disminuir"),
+        ("aj_cantidad",    1),
+        ("aj_obs",         ""),
+        ("aj_exito",       False),
+    ]:
+        if _k not in st.session_state:
+            st.session_state[_k] = _v
+
+    def reset_aj():
+        st.session_state["aj_paso"]     = 1
+        st.session_state["aj_fecha"]    = date.today()
+        st.session_state["aj_sku_sel"]  = None
+        st.session_state["aj_df_snap"]  = []
+        st.session_state["aj_registro"] = None
+        st.session_state["aj_tipo"]     = "Disminuir"
+        st.session_state["aj_cantidad"] = 1
+        st.session_state["aj_obs"]      = ""
+        st.session_state["aj_exito"]    = False
+
+    # Stock completo incluyendo merma
+    stock_aj = calcular_stock(df, fecha_corte=date.today(), excluir_tipos=None)
+
+    if stock_aj.empty:
+        st.info("No hay stock registrado.")
+        st.stop()
+
+    # ── PASO 1: Seleccionar SKU y fila ────────────────────────────────────────
+    if st.session_state["aj_paso"] == 1:
+
+        st.markdown("""
+        <div style="background:#fefce8;border-left:4px solid #ca8a04;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#713f12;margin-bottom:16px">
+          <b>Paso 1 de 3</b> — Selecciona la fecha del ajuste y el SKU a modificar.
+        </div>""", unsafe_allow_html=True)
+
+        skus_aj = sorted(stock_aj["SKU MASEF"].unique().tolist())
+        sku_labels_aj = {
+            s: f"{s} — {stock_aj[stock_aj['SKU MASEF']==s]['DESCRIPTION'].iloc[0]}"
+            for s in skus_aj
+        }
+
+        c1, c2 = st.columns(2)
+        with c1:
+            inp_fecha_aj = st.date_input("📅 Fecha del ajuste", value=st.session_state["aj_fecha"], key="aj_inp_fecha")
+        with c2:
+            inp_sku_aj = st.selectbox(
+                "🔍 SKU",
+                skus_aj,
+                format_func=lambda s: sku_labels_aj.get(s, s),
+                index=skus_aj.index(st.session_state["aj_sku_sel"]) if st.session_state["aj_sku_sel"] in skus_aj else 0,
+                key="aj_inp_sku"
+            )
+
+        st.session_state["aj_fecha"]   = inp_fecha_aj
+        st.session_state["aj_sku_sel"] = inp_sku_aj
+
+        # Snapshot del stock de ese SKU (todos los estados incl. merma)
+        df_snap_aj = stock_aj[stock_aj["SKU MASEF"] == inp_sku_aj][
+            ["SKU MASEF","DESCRIPTION","CTN","ESTADO","FECHA VCTO","Stock"]
+        ].reset_index(drop=True)
+        st.session_state["aj_df_snap"] = df_snap_aj.to_dict("records")
+
+        st.divider()
+        st.markdown(
+            f"<div style='font-size:11px;font-weight:700;color:#64748b;"
+            f"text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+            f"📦 Stock actual (incluye merma) — {inp_sku_aj}</div>",
+            unsafe_allow_html=True
+        )
+
+        registros_aj = st.session_state.get("aj_df_snap", [])
+        if not registros_aj:
+            st.info("No hay stock para este SKU.")
+        else:
+            st.markdown(
+                "<div style='font-size:12px;color:#64748b;margin-bottom:6px'>"
+                "Haz clic en <b>Seleccionar</b> en la fila que quieres ajustar.</div>",
+                unsafe_allow_html=True
+            )
+            for i, row in enumerate(registros_aj):
+                fv = row["FECHA VCTO"] if row["FECHA VCTO"] else "—"
+                col_info, col_btn = st.columns([5, 1])
+                with col_info:
+                    es_merma = row["ESTADO"] == "MERMA"
+                    color_estado = "#dc2626" if es_merma else "#185FA5"
+                    st.markdown(
+                        f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
+                        f"padding:10px 14px;font-size:13px;line-height:1.6'>"
+                        f"<b>CTN:</b> {row['CTN']} &nbsp;|&nbsp; "
+                        f"<b>Estado:</b> <span style='color:{color_estado};font-weight:600'>{row['ESTADO']}</span>"
+                        f" &nbsp;|&nbsp; <b>FV:</b> {fv}"
+                        f" &nbsp;|&nbsp; <b>Stock:</b> <span style='color:#059669;font-weight:700'>{row['Stock']:,}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True
+                    )
+                with col_btn:
+                    if st.button("Seleccionar", key=f"aj_sel_{i}", use_container_width=True):
+                        st.session_state["aj_registro"] = registros_aj[i]
+                        st.session_state["aj_paso"]     = 2
+                        st.rerun()
+
+    # ── PASO 2: Tipo y cantidad del ajuste ─────────────────────────────────────
+    elif st.session_state["aj_paso"] == 2:
+
+        reg = st.session_state["aj_registro"]
+        fv  = reg["FECHA VCTO"] if reg["FECHA VCTO"] else "—"
+
+        st.markdown("""
+        <div style="background:#fefce8;border-left:4px solid #ca8a04;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#713f12;margin-bottom:16px">
+          <b>Paso 2 de 3</b> — Define si el ajuste es positivo (aumentar) o negativo (disminuir) y la cantidad.
+        </div>""", unsafe_allow_html=True)
+
+        # Banner del registro seleccionado
+        st.markdown(
+            f"<div style='background:#0d1b2a;color:white;border-radius:10px;"
+            f"padding:14px 20px;margin-bottom:16px;font-size:13px;line-height:1.8'>"
+            f"<b>SKU:</b> {reg['SKU MASEF']} — {reg['DESCRIPTION']}<br>"
+            f"<b>CTN:</b> {reg['CTN']} &nbsp;|&nbsp; "
+            f"<b>Estado:</b> <span style='color:#93c5fd'>{reg['ESTADO']}</span> &nbsp;|&nbsp; "
+            f"<b>FV:</b> {fv} &nbsp;|&nbsp; "
+            f"<b>Stock actual:</b> <span style='color:#6ee7b7;font-weight:700'>{reg['Stock']:,}</span>"
+            f"</div>", unsafe_allow_html=True
+        )
+
+        with st.form("aj_form_p2"):
+            c1, c2 = st.columns(2)
+            with c1:
+                inp_tipo_aj = st.radio(
+                    "Tipo de ajuste",
+                    ["📉  Disminuir", "📈  Aumentar"],
+                    horizontal=True,
+                    key="aj_inp_tipo"
+                )
+            with c2:
+                max_cant = int(reg["Stock"]) if "Disminuir" in inp_tipo_aj else 999999
+                inp_cant_aj = st.number_input(
+                    "Cantidad a ajustar",
+                    min_value=1,
+                    max_value=max_cant,
+                    value=1,
+                    step=1,
+                    key="aj_inp_cant"
+                )
+            inp_obs_aj = st.text_input("📝 Observación (opcional)", key="aj_inp_obs")
+            c3, c4 = st.columns(2)
+            with c3:
+                btn_ok_aj   = st.form_submit_button("➡️  Revisar y confirmar", use_container_width=True, type="primary")
+            with c4:
+                btn_back_aj = st.form_submit_button("⬅️  Volver", use_container_width=True)
+
+        if btn_back_aj:
+            st.session_state["aj_paso"] = 1; st.rerun()
+        if btn_ok_aj:
+            st.session_state["aj_tipo"]     = st.session_state["aj_inp_tipo"]
+            st.session_state["aj_cantidad"] = int(st.session_state["aj_inp_cant"])
+            st.session_state["aj_obs"]      = st.session_state["aj_inp_obs"]
+            st.session_state["aj_paso"]     = 3; st.rerun()
+
+    # ── PASO 3: Confirmación ──────────────────────────────────────────────────
+    elif st.session_state["aj_paso"] == 3:
+
+        reg      = st.session_state["aj_registro"]
+        tipo_aj  = st.session_state["aj_tipo"]
+        cantidad = st.session_state["aj_cantidad"]
+        obs_aj   = st.session_state["aj_obs"]
+        fecha_reg= st.session_state["aj_fecha"].strftime("%d/%m/%Y")
+        fv       = reg["FECHA VCTO"] if reg["FECHA VCTO"] else ""
+        es_baja  = "Disminuir" in tipo_aj
+
+        unidades_finales = reg["Stock"] - cantidad if es_baja else reg["Stock"] + cantidad
+        valor_registro   = -cantidad if es_baja else cantidad
+        color_card       = "#fef2f2" if es_baja else "#f0fdf4"
+        border_card      = "#fca5a5" if es_baja else "#86efac"
+        color_txt        = "#dc2626" if es_baja else "#16a34a"
+        icono            = "📉" if es_baja else "📈"
+        signo            = f"−{cantidad:,}" if es_baja else f"+{cantidad:,}"
+
+        st.markdown("""
+        <div style="background:#fefce8;border-left:4px solid #ca8a04;border-radius:6px;
+                    padding:10px 16px;font-size:13px;color:#713f12;margin-bottom:16px">
+          <b>Paso 3 de 3</b> — Revisa el resumen y confirma el ajuste.
+        </div>""", unsafe_allow_html=True)
+
+        c_antes, c_flecha, c_despues = st.columns([2,1,2])
+        with c_antes:
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;"
+                f"padding:16px;text-align:center'>"
+                f"<div style='font-size:11px;color:#64748b;font-weight:700;text-transform:uppercase;"
+                f"letter-spacing:.08em;margin-bottom:6px'>STOCK ACTUAL</div>"
+                f"<div style='font-size:28px;font-weight:700;color:#1e293b'>{reg['Stock']:,}</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                f"CTN: {reg['CTN']}<br>Estado: {reg['ESTADO']}<br>FV: {fv or '—'}</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+        with c_flecha:
+            st.markdown(
+                f"<div style='display:flex;align-items:center;justify-content:center;"
+                f"height:100%;font-size:28px'>{icono}</div>",
+                unsafe_allow_html=True
+            )
+        with c_despues:
+            st.markdown(
+                f"<div style='background:{color_card};border:1px solid {border_card};border-radius:10px;"
+                f"padding:16px;text-align:center'>"
+                f"<div style='font-size:11px;color:{color_txt};font-weight:700;text-transform:uppercase;"
+                f"letter-spacing:.08em;margin-bottom:6px'>AJUSTE: {signo}</div>"
+                f"<div style='font-size:28px;font-weight:700;color:{color_txt}'>{unidades_finales:,}</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                f"Stock resultante<br>CTN: {reg['CTN']}<br>FV: {fv or '—'}</div>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+        if obs_aj:
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;"
+                f"padding:10px 16px;font-size:12px;color:#64748b;margin-top:12px'>"
+                f"📝 <b>Obs:</b> {obs_aj} &nbsp;|&nbsp; 📅 Fecha: <b>{fecha_reg}</b>"
+                f"</div>", unsafe_allow_html=True
+            )
+
+        if es_baja and unidades_finales < 0:
+            st.error("❌ La cantidad a disminuir supera el stock disponible.")
+
+        col_ok, col_back = st.columns(2)
+        with col_back:
+            if st.button("⬅️  Volver", use_container_width=True, key="aj_back_p3"):
+                st.session_state["aj_paso"] = 2; st.rerun()
+        with col_ok:
+            btn_disabled = es_baja and unidades_finales < 0
+            if st.button("✅  Confirmar ajuste", use_container_width=True, type="primary",
+                         key="aj_confirm", disabled=btn_disabled):
+                fila_aj = [
+                    fecha_reg,
+                    reg["SKU MASEF"],
+                    reg["DESCRIPTION"],
+                    reg["CTN"],
+                    reg["ESTADO"],
+                    fv,
+                    valor_registro,
+                    "",
+                    "AJUSTE",
+                    "",
+                    obs_aj,
+                    NOMBRE_USUARIO
+                ]
+                try:
+                    client_aj = get_client()
+                    ws_aj     = client_aj.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                    ws_aj.append_rows([fila_aj], value_input_option="USER_ENTERED")
+                    st.cache_data.clear()
+                    st.session_state["aj_exito"] = True
+                    reset_aj(); st.rerun()
+                except Exception as e:
+                    st.error(f"❌ Error al guardar: {e}")
+
+    # ── Banner éxito ───────────────────────────────────────────────────────────
+    if st.session_state.get("aj_exito"):
+        st.session_state["aj_exito"] = False
+        st.success("✅ Ajuste registrado correctamente.")
+        if st.button("⚖️  Hacer otro ajuste", use_container_width=True):
+            reset_aj(); st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
