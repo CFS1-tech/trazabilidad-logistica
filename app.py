@@ -3876,8 +3876,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de estado", use_container_width=True, type="primary", key="ce_confirm_est"):
                 obs = f"Cambio de estado: {reg['ESTADO']} → {estado_dest}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], estado_dest,   fv,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv, -cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], estado_dest,   fv,  cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
@@ -3963,8 +3963,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de vencimiento", use_container_width=True, type="primary", key="ce_confirm_fv"):
                 obs = f"Cambio de vencimiento: {fv_vieja} → {fv_nueva}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_vieja, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_nueva,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_vieja, -cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"], reg["ESTADO"], fv_nueva,  cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
@@ -4053,8 +4053,8 @@ elif vista == "🔀  Cambios":
         with col_ok:
             if st.button("✅  Confirmar cambio de contenedor", use_container_width=True, type="primary", key="ce_confirm_ctn"):
                 obs = f"Cambio de contenedor: {reg['CTN']} → {ctn_dest}"
-                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"],  reg["ESTADO"], fv, -cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
-                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], ctn_dest,    reg["ESTADO"], fv,  cantidad, "", "AJUSTE", "", obs, NOMBRE_USUARIO]
+                fila_out = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], reg["CTN"],  reg["ESTADO"], fv, -cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
+                fila_in  = [fecha_reg, reg["SKU MASEF"], reg["DESCRIPTION"], ctn_dest,    reg["ESTADO"], fv,  cantidad, "", "MOVIMIENTO INTERNO", "", obs, NOMBRE_USUARIO]
                 try:
                     client_ce = get_client()
                     ws_ce     = client_ce.open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
