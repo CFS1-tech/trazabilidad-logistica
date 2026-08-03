@@ -656,7 +656,7 @@ NOMBRE_USUARIO = st.session_state.get("nombre") or st.session_state.get("usuario
 VISTAS_REPORTES_ADMIN    = ["📊  Dashboard", "📦  Stock", "🔍  Trazabilidad", "🚚  Despachos", "📦  Packing List", "⚠️  Merma", "🔴  Stock con Merma"]
 VISTAS_REPORTES_OPERADOR = ["🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
 VISTAS_REPORTES_CLIENTE  = ["📊  Dashboard", "🔍  Trazabilidad", "📦  Packing List", "🚚  Despachos", "🔴  Stock con Merma"]
-VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📥  Carga Packing List", "📥  Ingreso Maquila", "🔄  Cambio de Estado CTN", "🔀  Cambios", "⚖️  Ajuste de Stock", "⚠️  Salida de Merma"]
+VISTAS_OPERACIONES      = ["🛒  Despacho Operativo", "📦  Recepción Operativa", "🔄  Cambio de Estado CTN", "🔀  Movimientos Internos", "⚖️  Ajuste de Stock", "🗑️  Despacho de Merma"]
 
 if ROL == "administrador":
     reportes_opts = VISTAS_REPORTES_ADMIN
@@ -2897,10 +2897,449 @@ elif vista == "🛒  Despacho Operativo":
 
 
     # ══════════════════════════════════════════════════════════════════════════════
-    # VISTA: CARGA PACKING LIST
+    # VISTA: RECEPCIÓN OPERATIVA
+    # ══════════════════════════════════════════════════════════════════════════════
+
+elif vista == "📦  Recepción Operativa":
+
+    st.markdown("""
+    <div class="wms-header">
+      <div style="font-size:32px">📦</div>
+      <div>
+        <h1>Recepción Operativa</h1>
+        <p>Carga de Packing List o Ingreso Maquila — selecciona el tipo de recepción</p>
+      </div>
+      <span class="wms-badge">Operación</span>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Session state para tipo seleccionado ──────────────────────────────────
+    if "recep_tipo" not in st.session_state:
+        st.session_state["recep_tipo"] = None
+
+    tipo_recep = st.session_state.get("recep_tipo")
+
+    # ── Pantalla inicial: elegir tipo ─────────────────────────────────────────
+    if tipo_recep is None:
+
+        st.markdown(
+            "<div style='font-size:14px;font-weight:600;color:#1e293b;margin-bottom:20px'>"
+            "¿Qué tipo de recepción deseas registrar?</div>",
+            unsafe_allow_html=True
+        )
+
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                "<div style='background:#eff6ff;border:2px solid #185FA5;border-radius:12px;"
+                "padding:28px 20px;text-align:center'>"
+                "<div style='font-size:40px;margin-bottom:10px'>📋</div>"
+                "<div style='font-size:15px;font-weight:700;color:#1e40af;margin-bottom:6px'>Carga de Packing List</div>"
+                "<div style='font-size:12px;color:#64748b'>Importa un Excel con el detalle del contenedor</div>"
+                "</div>", unsafe_allow_html=True
+            )
+            if st.button("Seleccionar — Carga Packing List", key="recep_btn_pl", use_container_width=True):
+                st.session_state["recep_tipo"] = "packing"
+                st.rerun()
+        with c2:
+            st.markdown(
+                "<div style='background:#ecfdf5;border:2px solid #059669;border-radius:12px;"
+                "padding:28px 20px;text-align:center'>"
+                "<div style='font-size:40px;margin-bottom:10px'>🏭</div>"
+                "<div style='font-size:15px;font-weight:700;color:#065f46;margin-bottom:6px'>Ingreso Maquila</div>"
+                "<div style='font-size:12px;color:#64748b'>Registra productos ya clasificados por estado y vencimiento</div>"
+                "</div>", unsafe_allow_html=True
+            )
+            if st.button("Seleccionar — Ingreso Maquila", key="recep_btn_maquila", use_container_width=True):
+                st.session_state["recep_tipo"] = "maquila"
+                st.rerun()
+
+    # ── Flujo según tipo seleccionado ─────────────────────────────────────────
+    else:
+        col_hdr, col_volver = st.columns([4, 1])
+        with col_volver:
+            if st.button("← Cambiar tipo", use_container_width=True, key="recep_volver"):
+                st.session_state["recep_tipo"] = None
+                # Limpiar estados internos de ambos submodulos
+                for k in list(st.session_state.keys()):
+                    if k.startswith("im_") or k.startswith("pl_up_"):
+                        del st.session_state[k]
+                st.rerun()
+
+        if tipo_recep == "packing":
+            # ── CARGA PACKING LIST ────────────────────────────────────────────
+            with col_hdr:
+                st.markdown(
+                    "<div style='background:#eff6ff;border-left:4px solid #185FA5;border-radius:6px;"
+                    "padding:10px 16px;font-size:13px;color:#1e40af;margin-bottom:16px'>"
+                    "📋 <b>Carga de Packing List</b></div>",
+                    unsafe_allow_html=True
+                )
+
+            # ── Contenido de Carga Packing List (copiado del módulo original) ─
+            # Plantilla descargable
+            COLS_INPUT = [
+                "SKU MASEF", "DESCRIPCIÓN", "Proveedor", "CTN",
+                "CASE QTY PL", "CASE PACK PL", "QTY PL",
+                "CASE QTY IN", "CASE PACK IN", "QTY IN",
+                "FECH ING", "OBS"
+            ]
+            COLS_SHEET = COLS_INPUT + ["DIF CAJAS", "DIF UNI", "ESTADO"]
+            PLANTILLA_DATA = {
+                "SKU MASEF":   [""],
+                "DESCRIPCIÓN": [""],
+                "Proveedor":   [""],
+                "CTN":         [""],
+                "CASE QTY PL": [50],
+                "CASE PACK PL":[12],
+                "QTY PL":      [600],
+                "CASE QTY IN": [50],
+                "CASE PACK IN":[12],
+                "QTY IN":      [600],
+                "FECH ING":    ["24/3/2026"],
+                "OBS":         [""],
+            }
+
+            def generar_plantilla_pl() -> bytes:
+                import io as _io
+                df_tmpl = pd.DataFrame(PLANTILLA_DATA)
+                buf = _io.BytesIO()
+                with pd.ExcelWriter(buf, engine="openpyxl") as w:
+                    df_tmpl.to_excel(w, index=False, sheet_name="PackingList")
+                return buf.getvalue()
+
+            c_dl, _ = st.columns([1, 3])
+            with c_dl:
+                st.download_button("📄  Plantilla", generar_plantilla_pl(),
+                                   "plantilla_packing_list.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+            archivo_pl_recep = st.file_uploader(
+                "Selecciona el archivo Excel del Packing List",
+                type=["xlsx","xls","csv"],
+                label_visibility="collapsed",
+                key="recep_pl_file"
+            )
+
+            if archivo_pl_recep:
+                try:
+                    df_up = pd.read_csv(archivo_pl_recep) if archivo_pl_recep.name.endswith(".csv") \
+                            else pd.read_excel(archivo_pl_recep)
+                except Exception as e:
+                    st.error(f"❌ No se pudo leer el archivo: {e}"); st.stop()
+
+                df_up.columns = [str(c).strip() for c in df_up.columns]
+                for col in COLS_SHEET:
+                    if col not in df_up.columns:
+                        df_up[col] = ""
+
+                df_up["CASE QTY PL"] = pd.to_numeric(df_up["CASE QTY PL"], errors="coerce").fillna(0)
+                df_up["CASE QTY IN"] = pd.to_numeric(df_up["CASE QTY IN"], errors="coerce").fillna(0)
+                df_up["QTY PL"]      = pd.to_numeric(df_up["QTY PL"],      errors="coerce").fillna(0)
+                df_up["QTY IN"]      = pd.to_numeric(df_up["QTY IN"],      errors="coerce").fillna(0)
+                df_up["DIF CAJAS"]   = (df_up["CASE QTY IN"] - df_up["CASE QTY PL"]).astype(int)
+                df_up["DIF UNI"]     = (df_up["QTY IN"]      - df_up["QTY PL"]).astype(int)
+
+                for c in ["DIF UNI","DIF CAJAS"]:
+                    if c in df_up.columns:
+                        df_up[c] = pd.to_numeric(df_up[c], errors="coerce").fillna(0).astype(int)
+
+                m1, m2, m3, m4 = st.columns(4)
+                m1.metric("Registros", f"{len(df_up):,}")
+                sku_col = next((c for c in df_up.columns if "SKU" in c.upper()), None)
+                m2.metric("SKUs", f"{df_up[sku_col].nunique():,}" if sku_col else "—")
+                m3.metric("DIF CAJAS", f"{int(df_up['DIF CAJAS'].sum()):+,}")
+                m4.metric("DIF UNI",   f"{int(df_up['DIF UNI'].sum()):+,}")
+
+                st.divider()
+
+                def _colorear_pl_recep(df):
+                    styles = pd.DataFrame('', index=df.index, columns=df.columns)
+                    for c in ["CASE QTY PL","CASE PACK PL","QTY PL"]:
+                        if c in df.columns: styles[c] = 'background-color:#dbeafe;color:#1e3a5f'
+                    for c in ["CASE QTY IN","CASE PACK IN","QTY IN"]:
+                        if c in df.columns: styles[c] = 'background-color:#dcfce7;color:#14532d'
+                    for c in ["DIF CAJAS","DIF UNI"]:
+                        if c in df.columns: styles[c] = 'background-color:#fef9c3;color:#713f12'
+                    return styles
+
+                st.dataframe(df_up.style.apply(_colorear_pl_recep, axis=None),
+                             use_container_width=True, hide_index=True)
+
+                if st.button("✅  Guardar Packing List", use_container_width=True, type="primary", key="recep_pl_guardar"):
+                    try:
+                        client_pl = get_client()
+                        sh_pl     = client_pl.open_by_key(st.secrets["spreadsheet_id"])
+                        ws_pl     = sh_pl.worksheet("PACKINGLIST")
+                        filas_pl  = df_up[COLS_SHEET].fillna("").values.tolist()
+                        ws_pl.append_rows(filas_pl, value_input_option="USER_ENTERED")
+                        st.cache_data.clear()
+                        st.success("✅ Packing List cargado correctamente.")
+                        # Reset al inicio
+                        st.session_state["recep_tipo"] = None
+                        for k in list(st.session_state.keys()):
+                            if k.startswith("recep_pl_"):
+                                del st.session_state[k]
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error al guardar: {e}")
+
+        else:
+            # ── INGRESO MAQUILA ───────────────────────────────────────────────
+            with col_hdr:
+                st.markdown(
+                    "<div style='background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;"
+                    "padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px'>"
+                    "🏭 <b>Ingreso Maquila</b></div>",
+                    unsafe_allow_html=True
+                )
+
+            # ── Selector de CTN + descarga de despachos ───────────────────────
+            st.markdown(
+                "<div style='font-size:11px;font-weight:700;color:#64748b;"
+                "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
+                "📦 Consultar despachos previos de un contenedor</div>",
+                unsafe_allow_html=True
+            )
+            ctns_im_recep = sorted(df["CTN"].dropna().astype(str).unique().tolist())
+            col_ctn_r, col_btn_r = st.columns([3, 1])
+            with col_ctn_r:
+                ctn_consulta_r = st.selectbox("CTN", ctns_im_recep, key="recep_im_ctn", label_visibility="collapsed")
+            with col_btn_r:
+                desc_desp_r = st.button("📥  Descargar despachos", use_container_width=True, key="recep_im_desc")
+
+            if desc_desp_r:
+                sal_ctn = df[
+                    (df["CTN"].astype(str) == ctn_consulta_r) &
+                    (df["TIPO DE MOVIMIENTO"].astype(str).str.strip().str.upper() == "SALIDA")
+                ].copy()
+                if sal_ctn.empty:
+                    st.warning(f"No hay registros de SALIDA para el CTN {ctn_consulta_r}.")
+                else:
+                    sal_ctn["FECHA_STR"] = pd.to_datetime(sal_ctn["FECHA"]).dt.strftime("%d/%m/%Y")
+                    sal_ctn["CANTIDAD"]  = sal_ctn["TOTAL UNIT"].abs()
+                    pivot_r = sal_ctn.pivot_table(
+                        index=["SKU MASEF","DESCRIPTION"], columns="FECHA_STR",
+                        values="CANTIDAD", aggfunc="sum", fill_value=0
+                    ).reset_index()
+                    cols_f = sorted([c for c in pivot_r.columns if c not in ("SKU MASEF","DESCRIPTION")],
+                                    key=lambda d: pd.to_datetime(d, dayfirst=True))
+                    pivot_r = pivot_r[["SKU MASEF","DESCRIPTION"] + cols_f]
+                    pivot_r["TOTAL DESPACHADO"] = pivot_r[cols_f].sum(axis=1)
+                    for c in cols_f + ["TOTAL DESPACHADO"]:
+                        pivot_r[c] = pivot_r[c].astype(int)
+                    buf_r = io.BytesIO()
+                    with pd.ExcelWriter(buf_r, engine="openpyxl") as wr:
+                        pivot_r.to_excel(wr, index=False, sheet_name="Despachos")
+                    st.success(f"✅ {len(pivot_r)} SKUs con despachos para el CTN {ctn_consulta_r}.")
+                    st.download_button("⬇️  Descargar Excel", buf_r.getvalue(),
+                                       f"despachos_ctn_{ctn_consulta_r}.xlsx",
+                                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                       use_container_width=True)
+                    st.dataframe(pivot_r, use_container_width=True, hide_index=True)
+
+            st.divider()
+
+            modo_im_r = st.radio("¿Cómo deseas ingresar los productos?",
+                                 ["📂  Subir archivo (Excel/CSV)", "✍️  Formulario manual"],
+                                 horizontal=True, key="recep_im_modo")
+            st.divider()
+
+            COLS_TRAZA_IM2 = ["FECHA","SKU MASEF","DESCRIPTION","CTN","ESTADO",
+                               "FECHA VCTO","TOTAL UNIT","GUIA","TIPO DE MOVIMIENTO","Tienda","OBS","USUARIO"]
+
+            if modo_im_r == "📂  Subir archivo (Excel/CSV)":
+                def gen_plantilla_im() -> bytes:
+                    ej = pd.DataFrame([{"FECHA":"27/06/2026","SKU MASEF":"1020002",
+                        "DESCRIPTION":"EJEMPLO","CTN":"1000","ESTADO":"DISPONIBLE",
+                        "FECHA VCTO":"8/3/2027","TOTAL UNIT":30,"GUIA":"","Tienda":"","OBS":""}])
+                    b = io.BytesIO()
+                    with pd.ExcelWriter(b, engine="openpyxl") as w: ej.to_excel(w, index=False, sheet_name="IngresoMaquila")
+                    return b.getvalue()
+
+                st.download_button("📄  Descargar plantilla", gen_plantilla_im(),
+                                   "plantilla_ingreso_maquila.xlsx",
+                                   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+                arch_im_r = st.file_uploader("Archivo", type=["xlsx","xls","csv"],
+                                             label_visibility="collapsed", key="recep_im_file")
+                if arch_im_r:
+                    try:
+                        df_im_r = pd.read_csv(arch_im_r) if arch_im_r.name.endswith(".csv") \
+                                  else pd.read_excel(arch_im_r)
+                    except Exception as e:
+                        st.error(f"❌ {e}"); st.stop()
+                    df_im_r.columns = [str(c).strip() for c in df_im_r.columns]
+                    for c in ["DESCRIPTION","OBS","GUIA","Tienda","FECHA"]:
+                        if c not in df_im_r.columns: df_im_r[c] = ""
+                    desc_col_im2 = next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
+                    desc_lkp = packing_df.set_index(col_sku_pk)[desc_col_im2].to_dict()
+                    df_im_r["SKU MASEF"] = df_im_r["SKU MASEF"].astype(str).str.strip()
+                    df_im_r["DESCRIPTION"] = df_im_r.apply(
+                        lambda r: r["DESCRIPTION"] if str(r["DESCRIPTION"]).strip() not in ("","nan")
+                        else desc_lkp.get(r["SKU MASEF"],""), axis=1)
+                    df_im_r["TOTAL UNIT"] = pd.to_numeric(df_im_r["TOTAL UNIT"], errors="coerce").fillna(0).astype(int)
+                    df_im_r["CTN"]    = df_im_r["CTN"].astype(str).str.strip()
+                    df_im_r["ESTADO"] = df_im_r["ESTADO"].astype(str).str.strip().str.upper()
+                    st.dataframe(df_im_r[["SKU MASEF","DESCRIPTION","CTN","ESTADO","FECHA VCTO","TOTAL UNIT","OBS"]],
+                                 use_container_width=True, hide_index=True)
+                    m1r, m2r = st.columns(2)
+                    m1r.metric("Registros", len(df_im_r))
+                    m2r.metric("Total unidades", f"{int(df_im_r['TOTAL UNIT'].sum()):,}")
+                    fecha_im_r = st.date_input("📅 Fecha de ingreso", value=date.today(), key="recep_im_fecha_arch")
+                    if st.button("✅  Confirmar ingreso", use_container_width=True, type="primary", key="recep_im_conf_arch"):
+                        fecha_s = fecha_im_r.strftime("%d/%m/%Y")
+                        filas_r = []
+                        for _, row in df_im_r.iterrows():
+                            fv_r = row.get("FECHA VCTO","")
+                            fv_s = "" if pd.isna(fv_r) or str(fv_r).strip() == "" \
+                                   else (fv_r.strftime("%d/%m/%Y") if hasattr(fv_r,"strftime") else str(fv_r).strip())
+                            filas_r.append([fecha_s, row["SKU MASEF"], row["DESCRIPTION"], row["CTN"],
+                                            row["ESTADO"], fv_s, int(row["TOTAL UNIT"]), "", "INGRESO",
+                                            "", str(row.get("OBS","")) if str(row.get("OBS","")) != "nan" else "",
+                                            NOMBRE_USUARIO])
+                        try:
+                            ws_imr = get_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                            ws_imr.append_rows(filas_r, value_input_option="USER_ENTERED")
+                            st.cache_data.clear()
+                            st.success(f"✅ {len(filas_r)} registros ingresados correctamente.")
+                            st.session_state["recep_tipo"] = None
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"❌ {e}")
+            else:
+                # Formulario manual
+                for _k2, _v2 in [("im_form_paso",1),("im_form_fecha",date.today()),
+                                  ("im_form_ctn",""),("im_form_items",[])]:
+                    if _k2 not in st.session_state: st.session_state[_k2] = _v2
+
+                if st.session_state["im_form_paso"] == 1:
+                    st.markdown("""<div style="background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;
+                        padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px">
+                        <b>Paso 1 de 2</b> — Indica la fecha de ingreso y el contenedor.</div>""",
+                        unsafe_allow_html=True)
+                    with st.form("recep_im_cab"):
+                        c1r, c2r = st.columns(2)
+                        with c1r: inp_fch = st.date_input("📅 Fecha", value=st.session_state["im_form_fecha"])
+                        with c2r: inp_ctn_r = st.text_input("📦 CTN", value=st.session_state["im_form_ctn"])
+                        btn_cont = st.form_submit_button("➡️  Continuar", use_container_width=True, type="primary")
+                    if btn_cont:
+                        if not inp_ctn_r.strip(): st.error("❌ Debes indicar el CTN.")
+                        else:
+                            st.session_state["im_form_fecha"] = inp_fch
+                            st.session_state["im_form_ctn"]   = inp_ctn_r.strip()
+                            st.session_state["im_form_paso"]  = 2; st.rerun()
+
+                elif st.session_state["im_form_paso"] == 2:
+                    col_h2, col_volver2 = st.columns([4,1])
+                    with col_h2:
+                        st.markdown(
+                            f"<div style='background:#ecfdf5;border-left:4px solid #059669;border-radius:6px;"
+                            f"padding:10px 16px;font-size:13px;color:#065f46;margin-bottom:16px'>"
+                            f"<b>Paso 2 de 2</b> — CTN: <b>{st.session_state['im_form_ctn']}</b> | "
+                            f"Fecha: <b>{st.session_state['im_form_fecha'].strftime('%d/%m/%Y')}</b></div>",
+                            unsafe_allow_html=True)
+                    with col_volver2:
+                        if st.button("← Volver", use_container_width=True, key="recep_im_volver"):
+                            st.session_state["im_form_paso"] = 1; st.rerun()
+
+                    skus_pl2   = sorted(packing_df[col_sku_pk].dropna().astype(str).unique().tolist())
+                    desc_col2  = next((c for c in packing_df.columns if "DESCRIP" in c.upper()), packing_df.columns[1])
+                    sku_lbl2   = {s: f"{s} — {packing_df[packing_df[col_sku_pk].astype(str)==s][desc_col2].iloc[0]}" for s in skus_pl2}
+                    es_nuevo2  = st.checkbox("➕ SKU nuevo (no está en el Packing List)", key="recep_im_nuevo")
+
+                    with st.form("recep_im_add", clear_on_submit=True):
+                        if es_nuevo2:
+                            c1n, c2n = st.columns(2)
+                            with c1n: inp_sku2  = st.text_input("🆕 Nuevo SKU", key="recep_sku_nuevo")
+                            with c2n: inp_desc2 = st.text_input("📝 Descripción", key="recep_desc_nuevo")
+                        else:
+                            inp_sku2  = st.selectbox("🔍 SKU", skus_pl2, format_func=lambda s: sku_lbl2.get(s,s), key="recep_sku_sel")
+                            inp_desc2 = None
+                        c3n, c4n, c5n = st.columns(3)
+                        with c3n: inp_est2  = st.selectbox("🏷️ Estado", ["DISPONIBLE","DISTRIBUIDOR","BANDEJAS","BANDEJAS MIXTAS","LATAS SUELTAS","DEVOLUCION","MERMA","GENERAL"], key="recep_estado2")
+                        with c4n: inp_fv2   = st.date_input("📅 FV", key="recep_fv2")
+                        with c5n: inp_cant2 = st.number_input("📦 Cantidad", min_value=1, value=1, step=1, key="recep_cant2")
+                        inp_obs2 = st.text_input("📝 Obs (opcional)", key="recep_obs2")
+                        btn_add2 = st.form_submit_button("➕  Agregar", use_container_width=True)
+
+                    if btn_add2:
+                        sku_f2 = (inp_sku2 or "").strip()
+                        if not sku_f2: st.error("❌ Debes indicar el SKU.")
+                        elif es_nuevo2 and not (inp_desc2 or "").strip(): st.error("❌ Indica la descripción.")
+                        else:
+                            desc_f2 = inp_desc2.strip() if es_nuevo2 else \
+                                (packing_df[packing_df[col_sku_pk].astype(str)==sku_f2][desc_col2].iloc[0]
+                                 if (packing_df[col_sku_pk].astype(str)==sku_f2).any() else "")
+                            st.session_state["im_form_items"].append({
+                                "SKU MASEF":sku_f2,"DESCRIPTION":desc_f2,
+                                "CTN":st.session_state["im_form_ctn"],"ESTADO":inp_est2,
+                                "FECHA VCTO":inp_fv2.strftime("%d/%m/%Y"),
+                                "TOTAL UNIT":int(inp_cant2),"OBS":inp_obs2.strip()})
+                            st.rerun()
+
+                    items2 = st.session_state.get("im_form_items",[])
+                    if items2:
+                        st.divider()
+                        for i2, itm in enumerate(items2):
+                            ci, cd = st.columns([5,1])
+                            with ci:
+                                st.markdown(
+                                    f"<div style='background:white;border:1px solid #e2e8f0;border-radius:8px;"
+                                    f"padding:10px 14px;font-size:13px'>"
+                                    f"<b>{itm['SKU MASEF']}</b> — {itm['DESCRIPTION']}<br>"
+                                    f"Estado: <b>{itm['ESTADO']}</b> | FV: {itm['FECHA VCTO']} | "
+                                    f"<span style='color:#059669;font-weight:700'>{itm['TOTAL UNIT']:,} un</span>"
+                                    f"</div>", unsafe_allow_html=True)
+                            with cd:
+                                if st.button("🗑️", key=f"recep_del_{i2}", use_container_width=True):
+                                    st.session_state["im_form_items"].pop(i2); st.rerun()
+
+                        total2 = sum(i["TOTAL UNIT"] for i in items2)
+                        st.markdown(f"<div style='background:#f0fdf4;border:1px solid #86efac;border-radius:8px;"
+                                    f"padding:10px 16px;font-size:13px;color:#065f46;margin:12px 0'>"
+                                    f"<b>Total: {total2:,} unidades</b></div>", unsafe_allow_html=True)
+
+                        col_conf2, col_clr2 = st.columns(2)
+                        with col_clr2:
+                            if st.button("🗑️  Vaciar lista", use_container_width=True, key="recep_vaciar"):
+                                st.session_state["im_form_items"] = []; st.rerun()
+                        with col_conf2:
+                            if st.button("✅  Confirmar ingreso", use_container_width=True, type="primary", key="recep_conf_form"):
+                                fecha_s2 = st.session_state["im_form_fecha"].strftime("%d/%m/%Y")
+                                filas2 = [[fecha_s2, i["SKU MASEF"], i["DESCRIPTION"], i["CTN"],
+                                           i["ESTADO"], i["FECHA VCTO"], int(i["TOTAL UNIT"]), "",
+                                           "INGRESO", "", i["OBS"], NOMBRE_USUARIO] for i in items2]
+                                try:
+                                    ws_im2 = get_client().open_by_key(st.secrets["spreadsheet_id"]).worksheet(SHEET_NAME)
+                                    ws_im2.append_rows(filas2, value_input_option="USER_ENTERED")
+                                    st.cache_data.clear()
+                                    st.success(f"✅ {len(filas2)} registros ingresados ({total2:,} unidades).")
+                                    # Reset al inicio
+                                    st.session_state["recep_tipo"]     = None
+                                    st.session_state["im_form_paso"]   = 1
+                                    st.session_state["im_form_ctn"]    = ""
+                                    st.session_state["im_form_items"]  = []
+                                    st.session_state["im_form_fecha"]  = date.today()
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"❌ {e}")
+                    else:
+                        st.info("Agrega productos usando el formulario de arriba.")
+
+
+    # ══════════════════════════════════════════════════════════════════════════════
+    # VISTA: CARGA PACKING LIST (mantenida para compatibilidad, redirige)
     # ══════════════════════════════════════════════════════════════════════════════
 
 elif vista == "📥  Carga Packing List":
+    st.info("Este módulo ahora está en **Recepción Operativa → Carga de Packing List**.")
+
+elif vista == "📥  Ingreso Maquila":
+    st.info("Este módulo ahora está en **Recepción Operativa → Ingreso Maquila**.")
+
+elif vista == "📥  _Carga Packing List_original":
+
 
     st.markdown(f"""
     <div class="wms-header">
@@ -3619,7 +4058,7 @@ elif vista == "🔄  Cambio de Estado CTN":
 # VISTA: CAMBIO DE ESTADO STOCK
 # ══════════════════════════════════════════════════════════════════════════════
 
-elif vista == "🔀  Cambios":
+elif vista == "🔀  Movimientos Internos":
 
     if ROL != "administrador":
         st.error("❌ Solo administradores pueden acceder a este módulo.")
@@ -3629,8 +4068,8 @@ elif vista == "🔀  Cambios":
     <div class="wms-header">
       <div style="font-size:32px">🔀</div>
       <div>
-        <h1>Cambios</h1>
-        <p>Cambio de estado, vencimiento o contenedor — genera movimientos de ajuste</p>
+        <h1>Movimientos Internos</h1>
+        <p>Cambio de estado, vencimiento o contenedor — genera movimientos internos</p>
       </div>
       <span class="wms-badge">Admin</span>
     </div>
@@ -4065,12 +4504,12 @@ elif vista == "🔀  Cambios":
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {e}")
 
-    # ── Banner de éxito ────────────────────────────────────────────────────────
+    # ── Banner de éxito (auto-reset al inicio) ───────────────────────────────
     if st.session_state.get("ce_exito"):
         st.session_state["ce_exito"] = False
-        st.success("✅ Cambio registrado correctamente.")
-        if st.button("🔀  Hacer otro cambio", use_container_width=True):
-            reset_ce(); st.rerun()
+        reset_ce()
+        st.success("✅ Movimiento interno registrado correctamente.")
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -4354,25 +4793,25 @@ elif vista == "⚖️  Ajuste de Stock":
                 except Exception as e:
                     st.error(f"❌ Error al guardar: {e}")
 
-    # ── Banner éxito ───────────────────────────────────────────────────────────
+    # ── Banner éxito (auto-reset al inicio) ──────────────────────────────────
     if st.session_state.get("aj_exito"):
         st.session_state["aj_exito"] = False
+        reset_aj()
         st.success("✅ Ajuste registrado correctamente.")
-        if st.button("⚖️  Hacer otro ajuste", use_container_width=True):
-            reset_aj(); st.rerun()
+        st.rerun()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # VISTA: SALIDA DE MERMA
 # ══════════════════════════════════════════════════════════════════════════════
 
-elif vista == "⚠️  Salida de Merma":
+elif vista == "🗑️  Despacho de Merma":
 
     st.markdown(f"""
     <div class="wms-header">
       <div style="font-size:32px">⚠️</div>
       <div>
-        <h1>Salida de Merma</h1>
+        <h1>Despacho de Merma</h1>
         <p>Registrar salidas de productos en estado MERMA</p>
       </div>
       <span class="wms-badge">Operación</span>
