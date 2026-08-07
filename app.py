@@ -335,7 +335,21 @@ def cargar_packinglist() -> pd.DataFrame:
         ws = sh.worksheet("PACKINGLIST")
         return pd.DataFrame(ws.get_all_records())
 
-    return _con_reintentos(_cargar)
+    df_pk = _con_reintentos(_cargar)
+
+    # Normalizar FECH ING: convertir cualquier formato de fecha a dd/mm/yyyy (string)
+    col_fech = next((c for c in df_pk.columns if "FECH" in c.upper()), None)
+    if col_fech:
+        def _limpiar_fecha(v):
+            if v is None or str(v).strip() in ("", "None", "nan", "NaT"):
+                return ""
+            try:
+                return pd.to_datetime(v, dayfirst=True, errors="coerce").strftime("%d/%m/%Y")
+            except:
+                return str(v).strip()
+        df_pk[col_fech] = df_pk[col_fech].apply(_limpiar_fecha)
+
+    return df_pk
 
 
 def calcular_stock(
@@ -2135,8 +2149,14 @@ elif vista == "📦  Packing List":
     # Ordenar de más reciente a más antiguo por FECH ING
     col_fecha_pk = next((c for c in pk.columns if "FECH" in c.upper()), None)
     if col_fecha_pk:
-        pk[col_fecha_pk] = pd.to_datetime(pk[col_fecha_pk], dayfirst=True, errors="coerce")
-        pk = pk.sort_values(col_fecha_pk, ascending=False)
+        pk["_fecha_sort"] = pd.to_datetime(pk[col_fecha_pk], dayfirst=True, errors="coerce")
+        pk = pk.sort_values("_fecha_sort", ascending=False).drop(columns=["_fecha_sort"])
+        # Asegurar que la columna se muestre como dd/mm/yyyy sin hora
+        pk[col_fecha_pk] = pk[col_fecha_pk].apply(
+            lambda v: "" if str(v).strip() in ("", "None", "nan", "NaT")
+            else (pd.to_datetime(v, dayfirst=True, errors="coerce").strftime("%d/%m/%Y")
+                  if pd.notna(pd.to_datetime(v, dayfirst=True, errors="coerce")) else str(v).strip())
+        )
 
     # DIF UNI como entero (sin decimales)
     if "DIF UNI" in pk.columns:
@@ -3050,6 +3070,16 @@ elif vista == "📦  Recepción Operativa":
                 for col in COLS_SHEET:
                     if col not in df_up.columns:
                         df_up[col] = ""
+
+                # Formatear FECH ING como dd/mm/yyyy (quitar hora si viene como datetime)
+                if "FECH ING" in df_up.columns:
+                    df_up["FECH ING"] = pd.to_datetime(df_up["FECH ING"], errors="coerce", dayfirst=True)
+                    df_up["FECH ING"] = df_up["FECH ING"].dt.strftime("%d/%m/%Y").fillna("")
+
+                # ESTADO por defecto EN REVISIÓN para filas sin estado
+                if "ESTADO" in df_up.columns:
+                    df_up["ESTADO"] = df_up["ESTADO"].replace("", "EN REVISIÓN").fillna("EN REVISIÓN")
+                    df_up["ESTADO"] = df_up["ESTADO"].apply(lambda v: "EN REVISIÓN" if str(v).strip() in ("", "0", "nan") else v)
 
                 df_up["CASE QTY PL"] = pd.to_numeric(df_up["CASE QTY PL"], errors="coerce").fillna(0)
                 df_up["CASE QTY IN"] = pd.to_numeric(df_up["CASE QTY IN"], errors="coerce").fillna(0)
