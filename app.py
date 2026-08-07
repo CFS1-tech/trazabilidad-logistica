@@ -3089,7 +3089,18 @@ elif vista == "📦  Recepción Operativa":
                         client_pl = get_client()
                         sh_pl     = client_pl.open_by_key(st.secrets["spreadsheet_id"])
                         ws_pl     = sh_pl.worksheet("PACKINGLIST")
-                        filas_pl  = df_up[COLS_SHEET].fillna("").values.tolist()
+                        # Convertir Timestamps a string para evitar error de serialización
+                        df_pl_export = df_up[COLS_SHEET].copy()
+                        for _c in df_pl_export.columns:
+                            if df_pl_export[_c].dtype == "datetime64[ns]" or str(df_pl_export[_c].dtype).startswith("datetime"):
+                                df_pl_export[_c] = df_pl_export[_c].dt.strftime("%d/%m/%Y")
+                        df_pl_export = df_pl_export.fillna("")
+                        # Convertir cualquier Timestamp residual a string
+                        def _ser(v):
+                            import pandas as _pd
+                            if isinstance(v, _pd.Timestamp): return v.strftime("%d/%m/%Y")
+                            return v
+                        filas_pl = [[_ser(v) for v in row] for row in df_pl_export.values.tolist()]
                         ws_pl.append_rows(filas_pl, value_input_option="USER_ENTERED")
                         st.cache_data.clear()
                         st.success("✅ Packing List cargado correctamente.")
