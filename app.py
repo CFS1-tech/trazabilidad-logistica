@@ -3153,11 +3153,11 @@ elif vista == "📦  Recepción Operativa":
                     unsafe_allow_html=True
                 )
 
-            # ── Selector de CTN + descarga de despachos ───────────────────────
+            # ── Selector de CTN + reporte de conciliación ────────────────────
             st.markdown(
                 "<div style='font-size:11px;font-weight:700;color:#64748b;"
                 "text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px'>"
-                "📦 Consultar despachos previos de un contenedor</div>",
+                "📦 Reporte de conciliación por contenedor</div>",
                 unsafe_allow_html=True
             )
             ctns_im_recep = sorted(df["CTN"].dropna().astype(str).unique().tolist())
@@ -3165,40 +3165,105 @@ elif vista == "📦  Recepción Operativa":
             with col_ctn_r:
                 ctn_consulta_r = st.selectbox("CTN", ctns_im_recep, key="recep_im_ctn", label_visibility="collapsed")
             with col_btn_r:
-                desc_desp_r = st.button("📥  Descargar despachos", use_container_width=True, key="recep_im_desc")
+                desc_desp_r = st.button("📊  Generar reporte", use_container_width=True, key="recep_im_desc")
 
             if desc_desp_r:
+                pl_ctn = packing_df[
+                    packing_df[col_ctn_pk].astype(str).str.strip() == ctn_consulta_r
+                ].copy()
+
+                col_desc_pl = next((c for c in packing_df.columns if "DESCRI" in c.upper()), packing_df.columns[1])
+                col_cppl    = next((c for c in packing_df.columns if "CASE PACK PL" in c.upper()), None)
+                col_qtypl   = next((c for c in packing_df.columns if c.upper() == "QTY PL"), None)
+                col_qtyin   = next((c for c in packing_df.columns if c.upper() == "QTY IN"), None)
+
+                fecha_pl_r   = _fecha_ingreso_ctn(ctn_consulta_r)
+                fech_ing_str = fecha_pl_r.strftime("%d/%m/%Y") if fecha_pl_r else "—"
+
                 sal_ctn = df[
                     (df["CTN"].astype(str) == ctn_consulta_r) &
                     (df["TIPO DE MOVIMIENTO"].astype(str).str.strip().str.upper() == "SALIDA")
                 ].copy()
-                if sal_ctn.empty:
-                    st.warning(f"No hay registros de SALIDA para el CTN {ctn_consulta_r}.")
+
+                total_desp = sal_ctn.groupby("SKU MASEF")["TOTAL UNIT"].apply(
+                    lambda x: x.abs().sum()
+                ).reset_index().rename(columns={"TOTAL UNIT": "TOTAL DESPACHADO"})
+
+                if pl_ctn.empty and sal_ctn.empty:
+                    st.warning(f"No hay datos en Packing List ni despachos para el CTN {ctn_consulta_r}.")
                 else:
-                    sal_ctn["FECHA_STR"] = pd.to_datetime(sal_ctn["FECHA"]).dt.strftime("%d/%m/%Y")
-                    sal_ctn["CANTIDAD"]  = sal_ctn["TOTAL UNIT"].abs()
-                    pivot_r = sal_ctn.pivot_table(
-                        index=["SKU MASEF","DESCRIPTION"], columns="FECHA_STR",
-                        values="CANTIDAD", aggfunc="sum", fill_value=0
-                    ).reset_index()
-                    cols_f = sorted([c for c in pivot_r.columns if c not in ("SKU MASEF","DESCRIPTION")],
-                                    key=lambda d: pd.to_datetime(d, dayfirst=True))
-                    pivot_r = pivot_r[["SKU MASEF","DESCRIPTION"] + cols_f]
-                    pivot_r["TOTAL DESPACHADO"] = pivot_r[cols_f].sum(axis=1)
-                    for c in cols_f + ["TOTAL DESPACHADO"]:
-                        pivot_r[c] = pivot_r[c].astype(int)
-                    # Agregar FECH ING del packing list como primera columna
-                    fecha_pl_r = _fecha_ingreso_ctn(ctn_consulta_r)
-                    pivot_r.insert(0, "FECH ING (PL)", fecha_pl_r.strftime("%d/%m/%Y") if fecha_pl_r else "—")
+                    if not pl_ctn.empty:
+                        cols_base = [col_sku_pk, col_desc_pl]
+                        if col_cppl:  cols_base.append(col_cppl)
+                        if col_qtypl: cols_base.append(col_qtypl)
+                        if col_qtyin: cols_base.append(col_qtyin)
+                        reporte = pl_ctn[cols_base].copy()
+                        reporte = reporte.rename(columns={
+                            col_sku_pk:  "SKU MASEF",
+                            col_desc_pl: "DESCRIPCIÓN",
+                            **({"col_cppl": "PRESENTACIÓN (CASE PACK PL)"} if col_cppl else {}),
+                        })
+                        if col_cppl and col_cppl in reporte.columns:
+                            reporte = reporte.rename(columns={col_cppl: "PRESENTACIÓN (CASE PACK PL)"})
+                        if col_qtypl and col_qtypl in reporte.columns:
+                            reporte = reporte.rename(columns={col_qtypl: "QTY PL"})
+                        if col_qtyin and col_qtyin in reporte.columns:
+                            reporte = reporte.rename(columns={col_qtyin: "QTY IN"})
+                        reporte["SKU MASEF"] = reporte["SKU MASEF"].astype(str).str.strip()
+                    else:
+                        reporte = sal_ctn.groupby(["SKU MASEF","DESCRIPTION"]).size().reset_index()[["SKU MASEF","DESCRIPTION"]]
+                        reporte = reporte.rename(columns={"DESCRIPTION":"DESCRIPCIÓN"})
+
+                    reporte = reporte.merge(total_desp, on="SKU MASEF", how="left")
+                    reporte["TOTAL DESPACHADO"] = reporte["TOTAL DESPACHADO"].fillna(0).astype(int)
+
+                    if "QTY IN" in reporte.columns:
+                        reporte["QTY IN"] = pd.to_numeric(reporte["QTY IN"], errors="coerce").fillna(0).astype(int)
+                        reporte["DIFERENCIA (PENDIENTE INGRESO)"] = reporte["QTY IN"] - reporte["TOTAL DESPACHADO"]
+                    elif "QTY PL" in reporte.columns:
+                        reporte["QTY PL"] = pd.to_numeric(reporte["QTY PL"], errors="coerce").fillna(0).astype(int)
+                        reporte["DIFERENCIA (PENDIENTE INGRESO)"] = reporte["QTY PL"] - reporte["TOTAL DESPACHADO"]
+
+                    if "PRESENTACIÓN (CASE PACK PL)" in reporte.columns:
+                        reporte["PRESENTACIÓN (CASE PACK PL)"] = pd.to_numeric(
+                            reporte["PRESENTACIÓN (CASE PACK PL)"], errors="coerce").fillna(0).astype(int)
+                    if "QTY PL" in reporte.columns:
+                        reporte["QTY PL"] = pd.to_numeric(reporte["QTY PL"], errors="coerce").fillna(0).astype(int)
+
+                    reporte.insert(0, "FECH ING", fech_ing_str)
+                    reporte.insert(1, "CTN", ctn_consulta_r)
+
+                    tot_in  = int(reporte["QTY IN"].sum())  if "QTY IN"  in reporte.columns else 0
+                    tot_d   = int(reporte["TOTAL DESPACHADO"].sum())
+                    tot_pen = int(reporte["DIFERENCIA (PENDIENTE INGRESO)"].sum()) if "DIFERENCIA (PENDIENTE INGRESO)" in reporte.columns else 0
+                    skus_pen = int((reporte["DIFERENCIA (PENDIENTE INGRESO)"] > 0).sum()) if "DIFERENCIA (PENDIENTE INGRESO)" in reporte.columns else 0
+
+                    m1, m2, m3, m4 = st.columns(4)
+                    m1.metric("📅 Fecha ingreso", fech_ing_str)
+                    m2.metric("📦 QTY IN total", f"{tot_in:,}")
+                    m3.metric("🚚 Total despachado", f"{tot_d:,}")
+                    m4.metric("⏳ Pendiente ingreso", f"{tot_pen:,}", delta=f"{skus_pen} SKUs")
+
+                    def _color_conc(row):
+                        pen = row.get("DIFERENCIA (PENDIENTE INGRESO)", 0)
+                        if pen > 0:   return ["background-color:#fef9c3"] * len(row)
+                        elif pen < 0: return ["background-color:#fef2f2"] * len(row)
+                        else:         return ["background-color:#f0fdf4"] * len(row)
+
+                    st.dataframe(
+                        reporte.style.apply(_color_conc, axis=1),
+                        use_container_width=True, hide_index=True
+                    )
+
                     buf_r = io.BytesIO()
                     with pd.ExcelWriter(buf_r, engine="openpyxl") as wr:
-                        pivot_r.to_excel(wr, index=False, sheet_name="Despachos")
-                    st.success(f"✅ {len(pivot_r)} SKUs con despachos para el CTN {ctn_consulta_r}.")
-                    st.download_button("⬇️  Descargar Excel", buf_r.getvalue(),
-                                       f"despachos_ctn_{ctn_consulta_r}.xlsx",
-                                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                                       use_container_width=True)
-                    st.dataframe(pivot_r, use_container_width=True, hide_index=True)
+                        reporte.to_excel(wr, index=False, sheet_name="Conciliación")
+                    st.download_button(
+                        "⬇️  Descargar Excel", buf_r.getvalue(),
+                        f"conciliacion_ctn_{ctn_consulta_r}.xlsx",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
 
             st.divider()
 
