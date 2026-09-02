@@ -1230,50 +1230,40 @@ if vista == "📊  Dashboard":
         unsafe_allow_html=True
     )
 
-    # Calcular stock actual solo DISPONIBLE y DISTRIBUIDOR
+    # Calcular stock actual solo DISPONIBLE y DISTRIBUIDOR con FV válida
     stock_vcto = calcular_stock(df, hoy)
     stock_vcto = stock_vcto[
         stock_vcto["ESTADO"].str.upper().isin(["DISPONIBLE", "DISTRIBUIDOR"])
     ].copy()
-
-    # Filtrar por fecha de vencimiento válida
     stock_vcto["FECHA VCTO"] = pd.to_datetime(stock_vcto["FECHA VCTO"], errors="coerce", dayfirst=True)
     stock_vcto = stock_vcto.dropna(subset=["FECHA VCTO"])
+    stock_vcto["DESCRIPTION"] = stock_vcto["DESCRIPTION"].fillna("").astype(str)
 
-    hoy_ts   = pd.Timestamp(hoy)
-    en30_ts  = hoy_ts + pd.Timedelta(days=30)
+    hoy_ts  = pd.Timestamp(hoy)
+    en30_ts = hoy_ts + pd.Timedelta(days=30)
 
     vcto_30 = stock_vcto[
         (stock_vcto["FECHA VCTO"] >= hoy_ts) &
         (stock_vcto["FECHA VCTO"] <= en30_ts)
     ].copy()
 
-    vcto_30["Días restantes"] = (vcto_30["FECHA VCTO"] - hoy_ts).dt.days
+    vcto_30["Días restantes"] = (vcto_30["FECHA VCTO"] - hoy_ts).dt.days.astype(int)
     vcto_30["FECHA VCTO STR"] = vcto_30["FECHA VCTO"].dt.strftime("%d/%m/%Y")
 
-    # Agrupar por SKU + descripción + FV para el gráfico
     vcto_agr = (
         vcto_30.groupby(["SKU MASEF", "DESCRIPTION", "FECHA VCTO STR", "Días restantes"])["Stock"]
-        .sum()
-        .reset_index()
-        .sort_values("Días restantes")
-    )
-    vcto_agr["DESCRIPTION"]   = vcto_agr["DESCRIPTION"].fillna("").astype(str)
-    vcto_agr["FECHA VCTO STR"] = vcto_agr["FECHA VCTO STR"].fillna("").astype(str)
-    vcto_agr["Label"] = vcto_agr.apply(
-        lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FECHA VCTO STR']})"
-                  if len(r["DESCRIPTION"]) > 28
-                  else f"{r['DESCRIPTION']} ({r['FECHA VCTO STR']})",
-        axis=1
+        .sum().reset_index().sort_values("Días restantes")
     )
 
-    # Color según urgencia
-    def _color_dias(d):
-        if d <= 7:  return "#ef4444"   # rojo — crítico
-        if d <= 15: return "#f97316"   # naranja — urgente
-        return "#eab308"               # amarillo — próximo
+    if not vcto_agr.empty:
+        d_col = vcto_agr["DESCRIPTION"].str[:28] + "… (" + vcto_agr["FECHA VCTO STR"] + ")"
+        f_col = vcto_agr["DESCRIPTION"]           + " (" + vcto_agr["FECHA VCTO STR"] + ")"
+        vcto_agr["Label"] = d_col.where(vcto_agr["DESCRIPTION"].str.len() > 28, f_col)
 
-    vcto_agr["Color"] = vcto_agr["Días restantes"].apply(_color_dias)
+        dias = vcto_agr["Días restantes"]
+        vcto_agr["Color"] = "#eab308"
+        vcto_agr.loc[dias <= 15, "Color"] = "#f97316"
+        vcto_agr.loc[dias <= 7,  "Color"] = "#ef4444"
 
     if vcto_agr.empty:
         st.markdown("""
@@ -1330,15 +1320,16 @@ if vista == "📊  Dashboard":
             tabla_vcto = vcto_agr[["SKU MASEF","DESCRIPTION","FECHA VCTO STR","Días restantes","Stock"]].copy()
             tabla_vcto.columns = ["SKU","Descripción","FV","Días","Stock"]
 
-            def _color_tabla_vcto(row):
-                d = row["Días"]
-                if d <= 7:  bg = "#fef2f2"
-                elif d <= 15: bg = "#fff7ed"
-                else:         bg = "#fefce8"
-                return [f"background-color:{bg}"] * len(row)
+            def _style_tabla_vcto(df):
+                styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                for idx in df.index:
+                    d = df.loc[idx, "Días"]
+                    bg = "#fef2f2" if d<=7 else ("#fff7ed" if d<=15 else "#fefce8")
+                    styles.loc[idx] = f"background-color:{bg}"
+                return styles
 
             st.dataframe(
-                tabla_vcto.style.apply(_color_tabla_vcto, axis=1).format({"Stock": "{:,}"}),
+                tabla_vcto.style.apply(_style_tabla_vcto, axis=None).format({"Stock": "{:,}"}),
                 use_container_width=True,
                 hide_index=True,
                 height=max(280, len(vcto_agr) * 36)
@@ -1882,13 +1873,14 @@ elif vista == "🔴  Stock con Merma":
             .sum().reset_index().sort_values("Días restantes")
         )
         vcto_sm_agr["DESCRIPTION"] = vcto_sm_agr["DESCRIPTION"].fillna("").astype(str)
-        vcto_sm_agr["Label"] = vcto_sm_agr.apply(
-            lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FV']})" if len(r["DESCRIPTION"]) > 28
-            else f"{r['DESCRIPTION']} ({r['FV']})", axis=1
-        )
-        vcto_sm_agr["Color"] = vcto_sm_agr["Días restantes"].apply(
-            lambda d: "#ef4444" if d <= 7 else ("#f97316" if d <= 15 else "#eab308")
-        )
+        vcto_sm_agr["FV"]          = vcto_sm_agr["FV"].fillna("").astype(str)
+        d_s = vcto_sm_agr["DESCRIPTION"].str[:28] + "… (" + vcto_sm_agr["FV"] + ")"
+        f_s = vcto_sm_agr["DESCRIPTION"]           + " (" + vcto_sm_agr["FV"] + ")"
+        vcto_sm_agr["Label"] = d_s.where(vcto_sm_agr["DESCRIPTION"].str.len() > 28, f_s)
+        dias_sm = vcto_sm_agr["Días restantes"]
+        vcto_sm_agr["Color"] = "#eab308"
+        vcto_sm_agr.loc[dias_sm <= 15, "Color"] = "#f97316"
+        vcto_sm_agr.loc[dias_sm <= 7,  "Color"] = "#ef4444"
 
         col_gv, col_tv = st.columns([3, 2])
         with col_gv:
@@ -1908,11 +1900,17 @@ elif vista == "🔴  Stock con Merma":
         with col_tv:
             tbl_v = vcto_sm_agr[["SKU MASEF","DESCRIPTION","FV","Días restantes","Stock"]].copy()
             tbl_v.columns = ["SKU","Descripción","FV","Días","Stock"]
-            def _cv(row):
-                d = row["Días"]
-                bg = "#fef2f2" if d<=7 else ("#fff7ed" if d<=15 else "#fefce8")
-                return [f"background-color:{bg}"]*len(row)
-            st.dataframe(tbl_v.style.apply(_cv, axis=1).format({"Stock":"{:,}"}),
+            def _bg_vcto(val, col_name):
+                return ""
+            # Colorear sin apply — usar background_gradient no aplica, usamos styler manual
+            def _style_vcto(df):
+                styles = pd.DataFrame("", index=df.index, columns=df.columns)
+                for idx in df.index:
+                    d = df.loc[idx, "Días"]
+                    bg = "#fef2f2" if d<=7 else ("#fff7ed" if d<=15 else "#fefce8")
+                    styles.loc[idx] = f"background-color:{bg}"
+                return styles
+            st.dataframe(tbl_v.style.apply(_style_vcto, axis=None).format({"Stock":"{:,}"}),
                          use_container_width=True, hide_index=True,
                          height=max(260, len(vcto_sm_agr)*36))
 
