@@ -1008,17 +1008,8 @@ if vista == "📊  Dashboard":
     k3.metric("📤 Salidas (30 días)",       f"{salidas_30:,}")
     k4.metric("📥 Entradas (30 días)",      f"{entradas_30:,}")
 
-    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-
-    k5, k6, k7, k8 = st.columns(4)
-    k5.metric("⚡ Salidas (7 días)",        f"{salidas_7:,}")
-    k6.metric("🔕 SKUs sin mov. (30d)",     f"{skus_sin_mov:,}")
-
-    k7.metric("⏳ SKUs sin mov. (30d)",     f"{skus_sin_mov:,}")
-
-    # CTNs activos
+    # CTNs activos (usado en alertas)
     ctns_activos = int(df_sin_merma[df_sin_merma["TOTAL UNIT"] > 0]["CTN"].nunique())
-    k8.metric("🚢 Contenedores en stock",   f"{ctns_activos:,}")
 
     st.divider()
 
@@ -1231,6 +1222,128 @@ if vista == "📊  Dashboard":
 
     st.divider()
 
+    # ── VENCIMIENTOS PRÓXIMOS (30 días) ──────────────────────────────────────
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+        "⏰ Productos Próximos a Vencer (30 días) — Estados: DISPONIBLE y DISTRIBUIDOR</div>",
+        unsafe_allow_html=True
+    )
+
+    # Calcular stock actual solo DISPONIBLE y DISTRIBUIDOR
+    stock_vcto = calcular_stock(df, hoy)
+    stock_vcto = stock_vcto[
+        stock_vcto["ESTADO"].str.upper().isin(["DISPONIBLE", "DISTRIBUIDOR"])
+    ].copy()
+
+    # Filtrar por fecha de vencimiento válida
+    stock_vcto["FECHA VCTO"] = pd.to_datetime(stock_vcto["FECHA VCTO"], errors="coerce", dayfirst=True)
+    stock_vcto = stock_vcto.dropna(subset=["FECHA VCTO"])
+
+    hoy_ts   = pd.Timestamp(hoy)
+    en30_ts  = hoy_ts + pd.Timedelta(days=30)
+
+    vcto_30 = stock_vcto[
+        (stock_vcto["FECHA VCTO"] >= hoy_ts) &
+        (stock_vcto["FECHA VCTO"] <= en30_ts)
+    ].copy()
+
+    vcto_30["Días restantes"] = (vcto_30["FECHA VCTO"] - hoy_ts).dt.days
+    vcto_30["FECHA VCTO STR"] = vcto_30["FECHA VCTO"].dt.strftime("%d/%m/%Y")
+
+    # Agrupar por SKU + descripción + FV para el gráfico
+    vcto_agr = (
+        vcto_30.groupby(["SKU MASEF", "DESCRIPTION", "FECHA VCTO STR", "Días restantes"])["Stock"]
+        .sum()
+        .reset_index()
+        .sort_values("Días restantes")
+    )
+    vcto_agr["Label"] = vcto_agr.apply(
+        lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FECHA VCTO STR']})"
+                  if len(r["DESCRIPTION"]) > 28
+                  else f"{r['DESCRIPTION']} ({r['FECHA VCTO STR']})",
+        axis=1
+    )
+
+    # Color según urgencia
+    def _color_dias(d):
+        if d <= 7:  return "#ef4444"   # rojo — crítico
+        if d <= 15: return "#f97316"   # naranja — urgente
+        return "#eab308"               # amarillo — próximo
+
+    vcto_agr["Color"] = vcto_agr["Días restantes"].apply(_color_dias)
+
+    if vcto_agr.empty:
+        st.markdown("""
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
+                    padding:14px 20px;color:#166534;font-size:13px;font-weight:500">
+          ✅ No hay productos próximos a vencer en los próximos 30 días.
+        </div>
+        """, unsafe_allow_html=True)
+    else:
+        # Métricas resumen vencimientos
+        total_vcto_un  = int(vcto_agr["Stock"].sum())
+        skus_criticos  = int((vcto_agr["Días restantes"] <= 7).sum())
+        skus_urgentes  = int(((vcto_agr["Días restantes"] > 7) & (vcto_agr["Días restantes"] <= 15)).sum())
+        skus_proximos  = int((vcto_agr["Días restantes"] > 15).sum())
+
+        v1, v2, v3, v4 = st.columns(4)
+        v1.metric("📦 Unidades por vencer", f"{total_vcto_un:,}")
+        v2.metric("🔴 Críticos (≤7 días)",  f"{skus_criticos}", delta="urgente" if skus_criticos else None,
+                  delta_color="inverse")
+        v3.metric("🟠 Urgentes (8-15 días)", f"{skus_urgentes}")
+        v4.metric("🟡 Próximos (16-30 días)",f"{skus_proximos}")
+
+        col_graf_v, col_tabla_v = st.columns([3, 2])
+
+        with col_graf_v:
+            fig_vcto = px.bar(
+                vcto_agr,
+                x="Stock",
+                y="Label",
+                orientation="h",
+                text="Stock",
+                color="Color",
+                color_discrete_map={
+                    "#ef4444": "#ef4444",
+                    "#f97316": "#f97316",
+                    "#eab308": "#eab308"
+                },
+                hover_data={"Días restantes": True, "FECHA VCTO STR": True,
+                            "Color": False, "Label": False}
+            )
+            fig_vcto.update_traces(textposition="outside", textfont_size=10)
+            fig_vcto.update_layout(
+                height=max(280, len(vcto_agr) * 34),
+                margin=dict(l=0, r=40, t=10, b=10),
+                paper_bgcolor="white",
+                plot_bgcolor="white",
+                showlegend=False,
+                yaxis=dict(title="", tickfont=dict(size=10), autorange="reversed"),
+                xaxis=dict(title="Unidades en stock", tickfont=dict(size=10)),
+            )
+            st.plotly_chart(fig_vcto, use_container_width=True)
+
+        with col_tabla_v:
+            tabla_vcto = vcto_agr[["SKU MASEF","DESCRIPTION","FECHA VCTO STR","Días restantes","Stock"]].copy()
+            tabla_vcto.columns = ["SKU","Descripción","FV","Días","Stock"]
+
+            def _color_tabla_vcto(row):
+                d = row["Días"]
+                if d <= 7:  bg = "#fef2f2"
+                elif d <= 15: bg = "#fff7ed"
+                else:         bg = "#fefce8"
+                return [f"background-color:{bg}"] * len(row)
+
+            st.dataframe(
+                tabla_vcto.style.apply(_color_tabla_vcto, axis=1).format({"Stock": "{:,}"}),
+                use_container_width=True,
+                hide_index=True,
+                height=max(280, len(vcto_agr) * 36)
+            )
+
+    st.divider()
+
     # ── ALERTAS ──────────────────────────────────────────────────────────────
     st.markdown(
         "<div style='font-size:11px;font-weight:700;color:#64748b;"
@@ -1239,37 +1352,74 @@ if vista == "📊  Dashboard":
         unsafe_allow_html=True
     )
 
-    alertas = []
+    alertas = []  # kept for compatibility
 
-    # SKUs sin movimiento en 30 días
-    if skus_sin_mov > 0:
-        alertas.append(("🔵", "Baja rotación",
-                        f"{skus_sin_mov} SKU(s) en stock sin movimiento en los últimos 30 días.", "#eff6ff", "#1d4ed8"))
+    # SKUs sin movimiento en 30 días — con detalle
+    skus_sin_mov_list = [s for s in skus_stock_list if s not in skus_activos_30]
+    skus_sin_mov = len(skus_sin_mov_list)
 
-    # Stock bajo (< 50 unidades)
+    # Stock bajo — con detalle
     stock_bajo = neto_global[(neto_global > 0) & (neto_global < 50)]
-    if len(stock_bajo):
-        alertas.append(("🔴", "Stock crítico",
-                        f"{len(stock_bajo)} SKU(s) con menos de 50 unidades disponibles.", "#fef2f2", "#b91c1c"))
 
-    if not alertas:
-        st.markdown("""
-        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
-                    padding:16px 20px;color:#166534;font-size:13px;font-weight:500">
-          ✅ Sin alertas activas. El almacén opera con normalidad.
-        </div>
-        """, unsafe_allow_html=True)
-    else:
-        cols_alerta = st.columns(len(alertas))
-        for i, (icon, titulo, msg, bg, color) in enumerate(alertas):
-            cols_alerta[i].markdown(
-                f"""<div style="background:{bg};border-left:4px solid {color};
-                                border-radius:8px;padding:14px 16px;height:100%">
-                      <div style="font-size:11px;font-weight:700;color:{color};
-                                  text-transform:uppercase;letter-spacing:.06em;
-                                  margin-bottom:4px">{icon} {titulo}</div>
-                      <div style="font-size:13px;color:#1e293b;font-weight:500">{msg}</div>
-                    </div>""",
+    if not vcto_agr.empty and skus_criticos > 0:
+        # Detalle de SKUs críticos
+        criticos_detalle = vcto_agr[vcto_agr["Días restantes"] <= 7][
+            ["SKU MASEF","DESCRIPTION","FECHA VCTO STR","Días restantes","Stock"]
+        ]
+        rows_crit = "".join([
+            f"<div style='padding:3px 0;border-bottom:1px solid #fecaca;font-size:12px'>"
+            f"<b>{r['SKU MASEF']}</b> — {r['DESCRIPTION'][:35]} "
+            f"<span style='color:#ef4444'>({r['FECHA VCTO STR']}, {r['Días restantes']}d)</span></div>"
+            for _, r in criticos_detalle.iterrows()
+        ])
+        st.markdown(
+            f"<div style='background:#fef2f2;border-left:4px solid #b91c1c;border-radius:8px;padding:14px 16px;margin-bottom:10px'>"
+            f"<div style='font-size:11px;font-weight:700;color:#b91c1c;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px'>🔴 Vencimiento crítico</div>"
+            f"{rows_crit}</div>",
+            unsafe_allow_html=True
+        )
+
+    col_al1, col_al2 = st.columns(2)
+
+    with col_al1:
+        if skus_sin_mov > 0:
+            sin_mov_detalle = [(s, desc_map.get(s, s)) for s in skus_sin_mov_list]
+            rows_sinmov = "".join([
+                f"<div style='padding:3px 0;border-bottom:1px solid #bfdbfe;font-size:12px'>"
+                f"<b>{sku}</b> — {desc[:40]}</div>"
+                for sku, desc in sin_mov_detalle
+            ])
+            st.markdown(
+                f"<div style='background:#eff6ff;border-left:4px solid #1d4ed8;border-radius:8px;padding:14px 16px;height:100%'>"
+                f"<div style='font-size:11px;font-weight:700;color:#1d4ed8;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px'>🔵 Baja rotación — {skus_sin_mov} SKU(s)</div>"
+                f"{rows_sinmov}</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                "<div style='background:#f0fdf4;border-left:4px solid #16a34a;border-radius:8px;padding:14px 16px'>"
+                "<div style='font-size:13px;color:#166534;font-weight:500'>✅ Todos los SKUs con movimiento en 30 días.</div></div>",
+                unsafe_allow_html=True
+            )
+
+    with col_al2:
+        if len(stock_bajo):
+            rows_bajo = "".join([
+                f"<div style='padding:3px 0;border-bottom:1px solid #fecaca;font-size:12px'>"
+                f"<b>{sku}</b> — {desc_map.get(sku, sku)[:35]} "
+                f"<span style='color:#b91c1c;font-weight:700'>({int(un)} un)</span></div>"
+                for sku, un in stock_bajo.items()
+            ])
+            st.markdown(
+                f"<div style='background:#fef2f2;border-left:4px solid #b91c1c;border-radius:8px;padding:14px 16px;height:100%'>"
+                f"<div style='font-size:11px;font-weight:700;color:#b91c1c;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px'>🔴 Stock crítico — {len(stock_bajo)} SKU(s)</div>"
+                f"{rows_bajo}</div>",
+                unsafe_allow_html=True
+            )
+        else:
+            st.markdown(
+                "<div style='background:#f0fdf4;border-left:4px solid #16a34a;border-radius:8px;padding:14px 16px'>"
+                "<div style='font-size:13px;color:#166534;font-weight:500'>✅ Sin SKUs con stock crítico.</div></div>",
                 unsafe_allow_html=True
             )
 
@@ -1691,6 +1841,77 @@ elif vista == "🔴  Stock con Merma":
     )
 
     botones_descarga(display_sm, "stock_con_merma")
+
+    # ── Vencimientos próximos (30 días) ───────────────────────────────────────
+    st.divider()
+    st.markdown(
+        "<div style='font-size:11px;font-weight:700;color:#64748b;"
+        "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
+        "⏰ Productos Próximos a Vencer (30 días) — DISPONIBLE y DISTRIBUIDOR</div>",
+        unsafe_allow_html=True
+    )
+
+    hoy_sm   = date.today()
+    hoy_ts_sm = pd.Timestamp(hoy_sm)
+    en30_sm   = hoy_ts_sm + pd.Timedelta(days=30)
+
+    stock_vcto_sm = calcular_stock(df, hoy_sm)
+    stock_vcto_sm = stock_vcto_sm[
+        stock_vcto_sm["ESTADO"].str.upper().isin(["DISPONIBLE","DISTRIBUIDOR"])
+    ].copy()
+    stock_vcto_sm["FECHA VCTO"] = pd.to_datetime(stock_vcto_sm["FECHA VCTO"], errors="coerce", dayfirst=True)
+    stock_vcto_sm = stock_vcto_sm.dropna(subset=["FECHA VCTO"])
+    vcto_sm = stock_vcto_sm[
+        (stock_vcto_sm["FECHA VCTO"] >= hoy_ts_sm) &
+        (stock_vcto_sm["FECHA VCTO"] <= en30_sm)
+    ].copy()
+
+    if vcto_sm.empty:
+        st.markdown(
+            "<div style='background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;"
+            "padding:14px 20px;color:#166534;font-size:13px'>✅ Sin vencimientos en los próximos 30 días.</div>",
+            unsafe_allow_html=True
+        )
+    else:
+        vcto_sm["Días restantes"] = (vcto_sm["FECHA VCTO"] - hoy_ts_sm).dt.days
+        vcto_sm["FV"] = vcto_sm["FECHA VCTO"].dt.strftime("%d/%m/%Y")
+        vcto_sm_agr = (
+            vcto_sm.groupby(["SKU MASEF","DESCRIPTION","FV","Días restantes"])["Stock"]
+            .sum().reset_index().sort_values("Días restantes")
+        )
+        vcto_sm_agr["Label"] = vcto_sm_agr.apply(
+            lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FV']})" if len(r["DESCRIPTION"]) > 28
+            else f"{r['DESCRIPTION']} ({r['FV']})", axis=1
+        )
+        vcto_sm_agr["Color"] = vcto_sm_agr["Días restantes"].apply(
+            lambda d: "#ef4444" if d <= 7 else ("#f97316" if d <= 15 else "#eab308")
+        )
+
+        col_gv, col_tv = st.columns([3, 2])
+        with col_gv:
+            fig_v = px.bar(vcto_sm_agr, x="Stock", y="Label", orientation="h",
+                           text="Stock", color="Color",
+                           color_discrete_map={"#ef4444":"#ef4444","#f97316":"#f97316","#eab308":"#eab308"},
+                           hover_data={"Días restantes":True,"FV":True,"Color":False,"Label":False})
+            fig_v.update_traces(textposition="outside", textfont_size=10)
+            fig_v.update_layout(
+                height=max(260, len(vcto_sm_agr)*34),
+                margin=dict(l=0,r=40,t=10,b=10),
+                paper_bgcolor="white", plot_bgcolor="white", showlegend=False,
+                yaxis=dict(title="", tickfont=dict(size=10), autorange="reversed"),
+                xaxis=dict(title="Unidades", tickfont=dict(size=10))
+            )
+            st.plotly_chart(fig_v, use_container_width=True)
+        with col_tv:
+            tbl_v = vcto_sm_agr[["SKU MASEF","DESCRIPTION","FV","Días restantes","Stock"]].copy()
+            tbl_v.columns = ["SKU","Descripción","FV","Días","Stock"]
+            def _cv(row):
+                d = row["Días"]
+                bg = "#fef2f2" if d<=7 else ("#fff7ed" if d<=15 else "#fefce8")
+                return [f"background-color:{bg}"]*len(row)
+            st.dataframe(tbl_v.style.apply(_cv, axis=1).format({"Stock":"{:,}"}),
+                         use_container_width=True, hide_index=True,
+                         height=max(260, len(vcto_sm_agr)*36))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
