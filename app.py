@@ -1258,7 +1258,8 @@ if vista == "📊  Dashboard":
         .reset_index()
         .sort_values("Días restantes")
     )
-    vcto_agr["DESCRIPTION"] = vcto_agr["DESCRIPTION"].fillna("").astype(str)
+    vcto_agr["DESCRIPTION"]   = vcto_agr["DESCRIPTION"].fillna("").astype(str)
+    vcto_agr["FECHA VCTO STR"] = vcto_agr["FECHA VCTO STR"].fillna("").astype(str)
     vcto_agr["Label"] = vcto_agr.apply(
         lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FECHA VCTO STR']})"
                   if len(r["DESCRIPTION"]) > 28
