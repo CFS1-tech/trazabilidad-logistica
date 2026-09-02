@@ -1258,6 +1258,7 @@ if vista == "📊  Dashboard":
         .reset_index()
         .sort_values("Días restantes")
     )
+    vcto_agr["DESCRIPTION"] = vcto_agr["DESCRIPTION"].fillna("").astype(str)
     vcto_agr["Label"] = vcto_agr.apply(
         lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FECHA VCTO STR']})"
                   if len(r["DESCRIPTION"]) > 28
@@ -1879,6 +1880,7 @@ elif vista == "🔴  Stock con Merma":
             vcto_sm.groupby(["SKU MASEF","DESCRIPTION","FV","Días restantes"])["Stock"]
             .sum().reset_index().sort_values("Días restantes")
         )
+        vcto_sm_agr["DESCRIPTION"] = vcto_sm_agr["DESCRIPTION"].fillna("").astype(str)
         vcto_sm_agr["Label"] = vcto_sm_agr.apply(
             lambda r: f"{r['DESCRIPTION'][:28]}… ({r['FV']})" if len(r["DESCRIPTION"]) > 28
             else f"{r['DESCRIPTION']} ({r['FV']})", axis=1
