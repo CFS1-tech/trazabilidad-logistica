@@ -1226,7 +1226,7 @@ if vista == "📊  Dashboard":
     st.markdown(
         "<div style='font-size:11px;font-weight:700;color:#64748b;"
         "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
-        "⏰ Productos Próximos a Vencer (3 meses) — Estados: DISPONIBLE y DISTRIBUIDOR</div>",
+        "⏰ Productos Próximos a Vencer (30 días) — Estados: DISPONIBLE y DISTRIBUIDOR</div>",
         unsafe_allow_html=True
     )
 
@@ -1240,7 +1240,7 @@ if vista == "📊  Dashboard":
     stock_vcto["DESCRIPTION"] = stock_vcto["DESCRIPTION"].fillna("").astype(str)
 
     hoy_ts  = pd.Timestamp(hoy)
-    en30_ts = hoy_ts + pd.Timedelta(days=90)
+    en30_ts = hoy_ts + pd.Timedelta(days=30)
 
     vcto_30 = stock_vcto[
         (stock_vcto["FECHA VCTO"] >= hoy_ts) &
@@ -1262,29 +1262,29 @@ if vista == "📊  Dashboard":
 
         dias = vcto_agr["Días restantes"]
         vcto_agr["Color"] = "#eab308"
-        vcto_agr.loc[dias <= 30, "Color"] = "#f97316"
-        vcto_agr.loc[dias <= 15, "Color"] = "#ef4444"
+        vcto_agr.loc[dias <= 15, "Color"] = "#f97316"
+        vcto_agr.loc[dias <= 7,  "Color"] = "#ef4444"
 
     if vcto_agr.empty:
         st.markdown("""
         <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
                     padding:14px 20px;color:#166534;font-size:13px;font-weight:500">
-          ✅ No hay productos próximos a vencer en los próximos 3 meses.
+          ✅ No hay productos próximos a vencer en los próximos 30 días.
         </div>
         """, unsafe_allow_html=True)
     else:
         # Métricas resumen vencimientos
         total_vcto_un  = int(vcto_agr["Stock"].sum())
-        skus_criticos  = int((vcto_agr["Días restantes"] <= 15).sum())
-        skus_urgentes  = int(((vcto_agr["Días restantes"] > 15) & (vcto_agr["Días restantes"] <= 30)).sum())
-        skus_proximos  = int((vcto_agr["Días restantes"] > 30).sum())
+        skus_criticos  = int((vcto_agr["Días restantes"] <= 7).sum())
+        skus_urgentes  = int(((vcto_agr["Días restantes"] > 7) & (vcto_agr["Días restantes"] <= 15)).sum())
+        skus_proximos  = int((vcto_agr["Días restantes"] > 15).sum())
 
         v1, v2, v3, v4 = st.columns(4)
         v1.metric("📦 Unidades por vencer", f"{total_vcto_un:,}")
-        v2.metric("🔴 Críticos (≤15 días)",  f"{skus_criticos}", delta="urgente" if skus_criticos else None,
+        v2.metric("🔴 Críticos (≤7 días)",  f"{skus_criticos}", delta="urgente" if skus_criticos else None,
                   delta_color="inverse")
-        v3.metric("🟠 Urgentes (16-30 días)", f"{skus_urgentes}")
-        v4.metric("🟡 Próximos (31-90 días)",f"{skus_proximos}")
+        v3.metric("🟠 Urgentes (8-15 días)", f"{skus_urgentes}")
+        v4.metric("🟡 Próximos (16-30 días)",f"{skus_proximos}")
 
         col_graf_v, col_tabla_v = st.columns([3, 2])
 
@@ -1356,7 +1356,7 @@ if vista == "📊  Dashboard":
 
     if not vcto_agr.empty and skus_criticos > 0:
         # Detalle de SKUs críticos
-        criticos_detalle = vcto_agr[vcto_agr["Días restantes"] <= 15][
+        criticos_detalle = vcto_agr[vcto_agr["Días restantes"] <= 7][
             ["SKU MASEF","DESCRIPTION","FECHA VCTO STR","Días restantes","Stock"]
         ]
         rows_crit = "".join([
@@ -1840,13 +1840,13 @@ elif vista == "🔴  Stock con Merma":
     st.markdown(
         "<div style='font-size:11px;font-weight:700;color:#64748b;"
         "text-transform:uppercase;letter-spacing:.08em;margin-bottom:10px'>"
-        "⏰ Productos Próximos a Vencer (3 meses) — DISPONIBLE y DISTRIBUIDOR</div>",
+        "⏰ Productos Próximos a Vencer (30 días) — DISPONIBLE y DISTRIBUIDOR</div>",
         unsafe_allow_html=True
     )
 
     hoy_sm   = date.today()
     hoy_ts_sm = pd.Timestamp(hoy_sm)
-    en30_sm   = hoy_ts_sm + pd.Timedelta(days=90)
+    en30_sm   = hoy_ts_sm + pd.Timedelta(days=30)
 
     stock_vcto_sm = calcular_stock(df, hoy_sm)
     stock_vcto_sm = stock_vcto_sm[
@@ -1862,7 +1862,7 @@ elif vista == "🔴  Stock con Merma":
     if vcto_sm.empty:
         st.markdown(
             "<div style='background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;"
-            "padding:14px 20px;color:#166534;font-size:13px'>✅ Sin vencimientos en los próximos 3 meses.</div>",
+            "padding:14px 20px;color:#166534;font-size:13px'>✅ Sin vencimientos en los próximos 30 días.</div>",
             unsafe_allow_html=True
         )
     else:
@@ -1879,8 +1879,8 @@ elif vista == "🔴  Stock con Merma":
         vcto_sm_agr["Label"] = d_s.where(vcto_sm_agr["DESCRIPTION"].str.len() > 28, f_s)
         dias_sm = vcto_sm_agr["Días restantes"]
         vcto_sm_agr["Color"] = "#eab308"
-        vcto_sm_agr.loc[dias_sm <= 30, "Color"] = "#f97316"
-        vcto_sm_agr.loc[dias_sm <= 15, "Color"] = "#ef4444"
+        vcto_sm_agr.loc[dias_sm <= 15, "Color"] = "#f97316"
+        vcto_sm_agr.loc[dias_sm <= 7,  "Color"] = "#ef4444"
 
         col_gv, col_tv = st.columns([3, 2])
         with col_gv:
