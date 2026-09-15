@@ -3341,18 +3341,31 @@ elif vista == "📦  Recepción Operativa":
                         client_pl = get_client()
                         sh_pl     = client_pl.open_by_key(st.secrets["spreadsheet_id"])
                         ws_pl     = sh_pl.worksheet("PACKINGLIST")
-                        # Convertir Timestamps a string para evitar error de serialización
-                        df_pl_export = df_up[COLS_SHEET].copy()
-                        for _c in df_pl_export.columns:
-                            if df_pl_export[_c].dtype == "datetime64[ns]" or str(df_pl_export[_c].dtype).startswith("datetime"):
-                                df_pl_export[_c] = df_pl_export[_c].dt.strftime("%d/%m/%Y")
-                        df_pl_export = df_pl_export.fillna("")
-                        # Convertir cualquier Timestamp residual a string
+
+                        # Leer headers reales del sheet para mapear columnas correctamente
+                        sheet_headers = ws_pl.row_values(1)
+
                         def _ser(v):
                             import pandas as _pd
                             if isinstance(v, _pd.Timestamp): return v.strftime("%d/%m/%Y")
+                            if _pd.isna(v) if not isinstance(v, str) else False: return ""
                             return v
-                        filas_pl = [[_ser(v) for v in row] for row in df_pl_export.values.tolist()]
+
+                        filas_pl = []
+                        for _, row in df_up.iterrows():
+                            fila = []
+                            for h in sheet_headers:
+                                # Buscar columna en df_up (case-insensitive y strip)
+                                match = next(
+                                    (c for c in df_up.columns if c.strip().upper() == h.strip().upper()),
+                                    None
+                                )
+                                if match:
+                                    fila.append(_ser(row[match]))
+                                else:
+                                    fila.append("")
+                            filas_pl.append(fila)
+
                         ws_pl.append_rows(filas_pl, value_input_option="USER_ENTERED")
                         st.cache_data.clear()
                         st.success("✅ Packing List cargado correctamente.")
