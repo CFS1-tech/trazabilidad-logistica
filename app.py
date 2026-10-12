@@ -1811,7 +1811,16 @@ elif vista == "🔴  Stock con Merma":
     cols_disp_sm.append("Stock")
 
     display_sm = stock_sm[cols_disp_sm].rename(columns=rename_sm)
-    max_sm = int(stock_sm["Stock"].max()) if len(stock_sm) else 1
+
+    # Agregar columna Stock Packs (Unidades / Presentación)
+    if "Presentación" in display_sm.columns:
+        presentacion_num = pd.to_numeric(display_sm["Presentación"], errors="coerce")
+        unidades_num = pd.to_numeric(display_sm["Unidades en Stock"], errors="coerce")
+        display_sm.insert(
+            display_sm.columns.get_loc("Unidades en Stock"),
+            "Stock Packs",
+            (unidades_num / presentacion_num).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
+        )
 
     # Resaltar filas de merma con color
     def highlight_merma(row):
@@ -1824,10 +1833,8 @@ elif vista == "🔴  Stock con Merma":
         use_container_width=True,
         hide_index=True,
         column_config={
-            "Unidades en Stock": st.column_config.ProgressColumn(
+            "Unidades en Stock": st.column_config.NumberColumn(
                 "Unidades en Stock",
-                min_value=0,
-                max_value=max_sm,
                 format="%d"
             )
         }
