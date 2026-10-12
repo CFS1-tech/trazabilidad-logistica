@@ -2387,19 +2387,46 @@ elif vista == "📦  Packing List":
                   if pd.notna(pd.to_datetime(v, dayfirst=True, errors="coerce")) else str(v).strip())
         )
 
-    # DIF UNI como entero (sin decimales)
-    if "DIF UNI" in pk.columns:
-        pk["DIF UNI"] = pd.to_numeric(pk["DIF UNI"], errors="coerce").fillna(0).astype(int)
-    if "DIF CAJAS" in pk.columns:
-        pk["DIF CAJAS"] = pd.to_numeric(pk["DIF CAJAS"], errors="coerce").fillna(0).astype(int)
+    # ── Calcular IN y DIF desde Trazabilidad (movimientos INGRESO por SKU+CTN) ──
+    ingresos_traza = df[
+        df["TIPO DE MOVIMIENTO"].astype(str).str.strip().str.upper() == "INGRESO"
+    ].copy()
+    ingresos_traza["SKU MASEF"] = ingresos_traza["SKU MASEF"].astype(str).str.strip()
+    ingresos_traza["CTN"]       = ingresos_traza["CTN"].astype(str).str.strip()
+    ingresos_traza["TOTAL UNIT"]= pd.to_numeric(ingresos_traza["TOTAL UNIT"], errors="coerce").fillna(0)
 
-    m1, m2 = st.columns(2)
+    # QTY IN: suma de unidades ingresadas por SKU+CTN
+    qty_in_grp = ingresos_traza.groupby(["SKU MASEF","CTN"])["TOTAL UNIT"].sum().reset_index()
+    qty_in_grp.columns = ["SKU MASEF","CTN","QTY IN calc"]
+
+    # CASE QTY IN: suma de cajas (TOTAL UNIT / CASE PACK PL) redondeado
+    pk["SKU MASEF"] = pk["SKU MASEF"].astype(str).str.strip()
+    pk["CTN"]       = pk[col_ctn].astype(str).str.strip()
+    pk["CASE QTY PL"] = pd.to_numeric(pk.get("CASE QTY PL",0), errors="coerce").fillna(0)
+    pk["CASE PACK PL"]= pd.to_numeric(pk.get("CASE PACK PL",0), errors="coerce").fillna(0)
+    pk["QTY PL"]      = pd.to_numeric(pk.get("QTY PL",0),       errors="coerce").fillna(0)
+
+    pk = pk.merge(qty_in_grp, on=["SKU MASEF","CTN"], how="left")
+    pk["QTY IN calc"] = pk["QTY IN calc"].fillna(0)
+
+    # CASE QTY IN = QTY IN / CASE PACK PL (redondeado)
+    pk["CASE QTY IN"] = pk.apply(
+        lambda r: round(r["QTY IN calc"] / r["CASE PACK PL"]) if r["CASE PACK PL"] > 0 else 0, axis=1
+    ).astype(int)
+    pk["CASE PACK IN"]= pk["CASE PACK PL"].astype(int)
+    pk["QTY IN"]      = pk["QTY IN calc"].astype(int)
+    pk["DIF CAJAS"]   = (pk["CASE QTY IN"] - pk["CASE QTY PL"]).astype(int)
+    pk["DIF UNI"]     = (pk["QTY IN"]      - pk["QTY PL"]).astype(int)
+    pk = pk.drop(columns=["QTY IN calc"], errors="ignore")
+
+    m1, m2, m3, m4 = st.columns(4)
     m1.metric("Registros", f"{len(pk):,}")
     m2.metric("SKUs",      f"{pk[col_sku].nunique():,}")
+    m3.metric("QTY PL Total", f"{int(pk['QTY PL'].sum()):,}")
+    m4.metric("QTY IN Total", f"{int(pk['QTY IN'].sum()):,}")
 
     st.divider()
 
-    # DIF UNI y DIF CAJAS como entero antes de mostrar
     for _col in ["DIF UNI","DIF CAJAS","CASE QTY PL","CASE QTY IN","QTY PL","QTY IN"]:
         if _col in pk.columns:
             pk[_col] = pd.to_numeric(pk[_col], errors="coerce").fillna(0).astype(int)
@@ -3243,33 +3270,23 @@ elif vista == "📦  Recepción Operativa":
                     unsafe_allow_html=True
                 )
 
-            # ── Contenido de Carga Packing List (copiado del módulo original) ─
-            # Plantilla descargable
-            COLS_INPUT = [
+            # ── Contenido de Carga Packing List ──────────────────────────────────
+            # Plantilla descargable — solo columnas de entrada (sin IN ni DIF)
+            COLS_INPUT_PL = [
+                "FECH ING", "CTN", "Proveedor", "SKU MASEF",
+                "CASE QTY PL", "CASE PACK PL", "QTY PL", "DESCRIPCIÓN", "OBS"
+            ]
+            # Columnas completas del sheet (IN y DIF se guardan vacíos, se calculan en reporte)
+            COLS_SHEET_PL = [
                 "SKU MASEF", "DESCRIPCIÓN", "Proveedor", "CTN",
                 "CASE QTY PL", "CASE PACK PL", "QTY PL",
                 "CASE QTY IN", "CASE PACK IN", "QTY IN",
-                "FECH ING", "OBS"
+                "FECH ING", "OBS", "DIF CAJAS", "DIF UNI", "ESTADO"
             ]
-            COLS_SHEET = COLS_INPUT + ["DIF CAJAS", "DIF UNI", "ESTADO"]
-            PLANTILLA_DATA = {
-                "SKU MASEF":   [""],
-                "DESCRIPCIÓN": [""],
-                "Proveedor":   [""],
-                "CTN":         [""],
-                "CASE QTY PL": [50],
-                "CASE PACK PL":[12],
-                "QTY PL":      [600],
-                "CASE QTY IN": [50],
-                "CASE PACK IN":[12],
-                "QTY IN":      [600],
-                "FECH ING":    ["24/3/2026"],
-                "OBS":         [""],
-            }
 
             def generar_plantilla_pl() -> bytes:
                 import io as _io
-                df_tmpl = pd.DataFrame(PLANTILLA_DATA)
+                df_tmpl = pd.DataFrame({c: [""] for c in COLS_INPUT_PL})
                 buf = _io.BytesIO()
                 with pd.ExcelWriter(buf, engine="openpyxl") as w:
                     df_tmpl.to_excel(w, index=False, sheet_name="PackingList")
@@ -3296,37 +3313,38 @@ elif vista == "📦  Recepción Operativa":
                     st.error(f"❌ No se pudo leer el archivo: {e}"); st.stop()
 
                 df_up.columns = [str(c).strip() for c in df_up.columns]
-                for col in COLS_SHEET:
+
+                # Agregar columnas faltantes vacías (IN y DIF se calculan automáticamente luego)
+                for col in COLS_SHEET_PL:
                     if col not in df_up.columns:
                         df_up[col] = ""
 
-                # Formatear FECH ING como dd/mm/yyyy (quitar hora si viene como datetime)
+                # Formatear FECH ING como dd/mm/yyyy
                 if "FECH ING" in df_up.columns:
                     df_up["FECH ING"] = pd.to_datetime(df_up["FECH ING"], errors="coerce", dayfirst=True)
                     df_up["FECH ING"] = df_up["FECH ING"].dt.strftime("%d/%m/%Y").fillna("")
 
-                # ESTADO por defecto EN REVISIÓN para filas sin estado
-                if "ESTADO" in df_up.columns:
-                    df_up["ESTADO"] = df_up["ESTADO"].replace("", "EN REVISIÓN").fillna("EN REVISIÓN")
-                    df_up["ESTADO"] = df_up["ESTADO"].apply(lambda v: "EN REVISIÓN" if str(v).strip() in ("", "0", "nan") else v)
+                # ESTADO por defecto EN REVISIÓN
+                df_up["ESTADO"] = df_up["ESTADO"].replace("", "EN REVISIÓN").fillna("EN REVISIÓN")
+                df_up["ESTADO"] = df_up["ESTADO"].apply(
+                    lambda v: "EN REVISIÓN" if str(v).strip() in ("", "0", "nan") else v
+                )
 
+                # Columnas PL como numérico; IN y DIF se dejan en 0 (se calcularán desde Trazabilidad)
                 df_up["CASE QTY PL"] = pd.to_numeric(df_up["CASE QTY PL"], errors="coerce").fillna(0)
-                df_up["CASE QTY IN"] = pd.to_numeric(df_up["CASE QTY IN"], errors="coerce").fillna(0)
+                df_up["CASE PACK PL"]= pd.to_numeric(df_up["CASE PACK PL"],errors="coerce").fillna(0)
                 df_up["QTY PL"]      = pd.to_numeric(df_up["QTY PL"],      errors="coerce").fillna(0)
-                df_up["QTY IN"]      = pd.to_numeric(df_up["QTY IN"],      errors="coerce").fillna(0)
-                df_up["DIF CAJAS"]   = (df_up["CASE QTY IN"] - df_up["CASE QTY PL"]).astype(int)
-                df_up["DIF UNI"]     = (df_up["QTY IN"]      - df_up["QTY PL"]).astype(int)
+                df_up["CASE QTY IN"] = 0
+                df_up["CASE PACK IN"]= 0
+                df_up["QTY IN"]      = 0
+                df_up["DIF CAJAS"]   = 0
+                df_up["DIF UNI"]     = 0
 
-                for c in ["DIF UNI","DIF CAJAS"]:
-                    if c in df_up.columns:
-                        df_up[c] = pd.to_numeric(df_up[c], errors="coerce").fillna(0).astype(int)
-
-                m1, m2, m3, m4 = st.columns(4)
-                m1.metric("Registros", f"{len(df_up):,}")
+                m1, m2, m3 = st.columns(3)
                 sku_col = next((c for c in df_up.columns if "SKU" in c.upper()), None)
+                m1.metric("Registros", f"{len(df_up):,}")
                 m2.metric("SKUs", f"{df_up[sku_col].nunique():,}" if sku_col else "—")
-                m3.metric("DIF CAJAS", f"{int(df_up['DIF CAJAS'].sum()):+,}")
-                m4.metric("DIF UNI",   f"{int(df_up['DIF UNI'].sum()):+,}")
+                m3.metric("QTY PL Total", f"{int(df_up['QTY PL'].sum()):,}")
 
                 st.divider()
 
@@ -3334,13 +3352,11 @@ elif vista == "📦  Recepción Operativa":
                     styles = pd.DataFrame('', index=df.index, columns=df.columns)
                     for c in ["CASE QTY PL","CASE PACK PL","QTY PL"]:
                         if c in df.columns: styles[c] = 'background-color:#dbeafe;color:#1e3a5f'
-                    for c in ["CASE QTY IN","CASE PACK IN","QTY IN"]:
-                        if c in df.columns: styles[c] = 'background-color:#dcfce7;color:#14532d'
-                    for c in ["DIF CAJAS","DIF UNI"]:
-                        if c in df.columns: styles[c] = 'background-color:#fef9c3;color:#713f12'
                     return styles
 
-                st.dataframe(df_up.style.apply(_colorear_pl_recep, axis=None),
+                # Mostrar solo columnas de entrada al usuario
+                cols_preview = [c for c in COLS_INPUT_PL if c in df_up.columns]
+                st.dataframe(df_up[cols_preview].style.apply(_colorear_pl_recep, axis=None),
                              use_container_width=True, hide_index=True)
 
                 if st.button("✅  Guardar Packing List", use_container_width=True, type="primary", key="recep_pl_guardar"):
