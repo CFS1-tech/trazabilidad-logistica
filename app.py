@@ -3467,7 +3467,7 @@ elif vista == "📦  Recepción Operativa":
                         reporte = sal_ctn.groupby(["SKU MASEF","DESCRIPTION"]).size().reset_index()[["SKU MASEF","DESCRIPTION"]]
                         reporte = reporte.rename(columns={"DESCRIPTION":"DESCRIPCIÓN"})
 
-                        reporte = reporte.merge(total_desp, on="SKU MASEF", how="left")
+                    reporte = reporte.merge(total_desp, on="SKU MASEF", how="left")
                     reporte["TOTAL DESPACHADO"] = reporte["TOTAL DESPACHADO"].fillna(0).astype(int)
 
                     if "QTY PL" in reporte.columns:
