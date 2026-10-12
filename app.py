@@ -3433,77 +3433,72 @@ elif vista == "📦  Recepción Operativa":
                 col_desc_pl = next((c for c in packing_df.columns if "DESCRI" in c.upper()), packing_df.columns[1])
                 col_cppl    = next((c for c in packing_df.columns if "CASE PACK PL" in c.upper()), None)
                 col_qtypl   = next((c for c in packing_df.columns if c.upper() == "QTY PL"), None)
-                col_qtyin   = next((c for c in packing_df.columns if c.upper() == "QTY IN"), None)
 
                 fecha_pl_r   = _fecha_ingreso_ctn(ctn_consulta_r)
                 fech_ing_str = fecha_pl_r.strftime("%d/%m/%Y") if fecha_pl_r else "—"
 
+                # Despachos (SALIDA) del CTN
                 sal_ctn = df[
                     (df["CTN"].astype(str) == ctn_consulta_r) &
                     (df["TIPO DE MOVIMIENTO"].astype(str).str.strip().str.upper() == "SALIDA")
                 ].copy()
-
                 total_desp = sal_ctn.groupby("SKU MASEF")["TOTAL UNIT"].apply(
                     lambda x: x.abs().sum()
                 ).reset_index().rename(columns={"TOTAL UNIT": "TOTAL DESPACHADO"})
 
                 if pl_ctn.empty and sal_ctn.empty:
-                    st.warning(f"No hay datos en Packing List ni despachos para el CTN {ctn_consulta_r}.")
+                    st.warning(f"No hay datos en Packing List ni movimientos para el CTN {ctn_consulta_r}.")
                 else:
                     if not pl_ctn.empty:
                         cols_base = [col_sku_pk, col_desc_pl]
                         if col_cppl:  cols_base.append(col_cppl)
                         if col_qtypl: cols_base.append(col_qtypl)
-                        if col_qtyin: cols_base.append(col_qtyin)
                         reporte = pl_ctn[cols_base].copy()
                         reporte = reporte.rename(columns={
                             col_sku_pk:  "SKU MASEF",
                             col_desc_pl: "DESCRIPCIÓN",
-                            **({"col_cppl": "PRESENTACIÓN (CASE PACK PL)"} if col_cppl else {}),
                         })
                         if col_cppl and col_cppl in reporte.columns:
                             reporte = reporte.rename(columns={col_cppl: "PRESENTACIÓN (CASE PACK PL)"})
                         if col_qtypl and col_qtypl in reporte.columns:
                             reporte = reporte.rename(columns={col_qtypl: "QTY PL"})
-                        if col_qtyin and col_qtyin in reporte.columns:
-                            reporte = reporte.rename(columns={col_qtyin: "QTY IN"})
                         reporte["SKU MASEF"] = reporte["SKU MASEF"].astype(str).str.strip()
                     else:
                         reporte = sal_ctn.groupby(["SKU MASEF","DESCRIPTION"]).size().reset_index()[["SKU MASEF","DESCRIPTION"]]
                         reporte = reporte.rename(columns={"DESCRIPTION":"DESCRIPCIÓN"})
 
-                    reporte = reporte.merge(total_desp, on="SKU MASEF", how="left")
+                        reporte = reporte.merge(total_desp, on="SKU MASEF", how="left")
                     reporte["TOTAL DESPACHADO"] = reporte["TOTAL DESPACHADO"].fillna(0).astype(int)
 
-                    if "QTY IN" in reporte.columns:
-                        reporte["QTY IN"] = pd.to_numeric(reporte["QTY IN"], errors="coerce").fillna(0).astype(int)
-                        reporte["DIFERENCIA (PENDIENTE INGRESO)"] = reporte["QTY IN"] - reporte["TOTAL DESPACHADO"]
-                    elif "QTY PL" in reporte.columns:
+                    if "QTY PL" in reporte.columns:
                         reporte["QTY PL"] = pd.to_numeric(reporte["QTY PL"], errors="coerce").fillna(0).astype(int)
-                        reporte["DIFERENCIA (PENDIENTE INGRESO)"] = reporte["QTY PL"] - reporte["TOTAL DESPACHADO"]
+
+                    # DIFERENCIA = QTY PL - TOTAL DESPACHADO
+                    reporte["DIFERENCIA (PENDIENTE)"] = reporte["QTY PL"] - reporte["TOTAL DESPACHADO"]
 
                     if "PRESENTACIÓN (CASE PACK PL)" in reporte.columns:
                         reporte["PRESENTACIÓN (CASE PACK PL)"] = pd.to_numeric(
                             reporte["PRESENTACIÓN (CASE PACK PL)"], errors="coerce").fillna(0).astype(int)
-                    if "QTY PL" in reporte.columns:
-                        reporte["QTY PL"] = pd.to_numeric(reporte["QTY PL"], errors="coerce").fillna(0).astype(int)
+
+                    # Sin columna QTY IN en la conciliación
+                    reporte = reporte.drop(columns=["QTY IN"], errors="ignore")
 
                     reporte.insert(0, "FECH ING", fech_ing_str)
                     reporte.insert(1, "CTN", ctn_consulta_r)
 
-                    tot_in  = int(reporte["QTY IN"].sum())  if "QTY IN"  in reporte.columns else 0
+                    tot_pl  = int(reporte["QTY PL"].sum())  if "QTY PL" in reporte.columns else 0
                     tot_d   = int(reporte["TOTAL DESPACHADO"].sum())
-                    tot_pen = int(reporte["DIFERENCIA (PENDIENTE INGRESO)"].sum()) if "DIFERENCIA (PENDIENTE INGRESO)" in reporte.columns else 0
-                    skus_pen = int((reporte["DIFERENCIA (PENDIENTE INGRESO)"] > 0).sum()) if "DIFERENCIA (PENDIENTE INGRESO)" in reporte.columns else 0
+                    tot_pen = int(reporte["DIFERENCIA (PENDIENTE)"].sum())
+                    skus_pen = int((reporte["DIFERENCIA (PENDIENTE)"] > 0).sum())
 
                     m1, m2, m3, m4 = st.columns(4)
                     m1.metric("📅 Fecha ingreso", fech_ing_str)
-                    m2.metric("📦 QTY IN total", f"{tot_in:,}")
+                    m2.metric("📋 QTY PL", f"{tot_pl:,}")
                     m3.metric("🚚 Total despachado", f"{tot_d:,}")
-                    m4.metric("⏳ Pendiente ingreso", f"{tot_pen:,}", delta=f"{skus_pen} SKUs")
+                    m4.metric("⏳ Pendiente despacho", f"{tot_pen:,}", delta=f"{skus_pen} SKUs")
 
                     def _color_conc(row):
-                        pen = row.get("DIFERENCIA (PENDIENTE INGRESO)", 0)
+                        pen = row.get("DIFERENCIA (PENDIENTE)", 0)
                         if pen > 0:   return ["background-color:#fef9c3"] * len(row)
                         elif pen < 0: return ["background-color:#fef2f2"] * len(row)
                         else:         return ["background-color:#f0fdf4"] * len(row)
