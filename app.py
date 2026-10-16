@@ -1819,6 +1819,9 @@ elif vista == "🔴  Stock con Merma":
         if "CASE PACK PL" in stock_sm.columns:
             case_pack_pl = pd.to_numeric(stock_sm["CASE PACK PL"], errors="coerce").fillna(0)
             presentacion_num = presentacion_num.where(presentacion_num > 0, case_pack_pl)
+        # Actualizar columna Presentación en display con el valor ya corregido (fallback aplicado)
+        presentacion_num.index = display_sm.index
+        display_sm["Presentación"] = presentacion_num.astype(int)
         presentacion_safe = presentacion_num.replace(0, float("nan"))
         unidades_num = pd.to_numeric(stock_sm["Stock"], errors="coerce")
         stock_packs = (unidades_num / presentacion_safe).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
