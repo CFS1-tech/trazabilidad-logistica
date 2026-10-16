@@ -1819,7 +1819,7 @@ elif vista == "🔴  Stock con Merma":
         display_sm.insert(
             display_sm.columns.get_loc("Unidades en Stock"),
             "Stock Packs",
-            (unidades_num / presentacion_num).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
+            (unidades_num / presentacion_num.replace(0, float("nan"))).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
         )
 
     # Resaltar filas de merma con color
