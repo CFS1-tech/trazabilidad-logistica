@@ -1813,13 +1813,21 @@ elif vista == "🔴  Stock con Merma":
     display_sm = stock_sm[cols_disp_sm].rename(columns=rename_sm)
 
     # Agregar columna Stock Packs (Unidades / Presentación)
+    # Usa CASE PACK IN; si está vacío o en 0, cae a CASE PACK PL
     if "Presentación" in display_sm.columns:
-        presentacion_num = pd.to_numeric(display_sm["Presentación"], errors="coerce")
+        presentacion_num = pd.to_numeric(display_sm["Presentación"], errors="coerce").fillna(0)
+        if "CASE PACK PL" in stock_sm.columns:
+            case_pack_pl = pd.to_numeric(stock_sm["CASE PACK PL"].values, errors="coerce").fillna(0)
+            import numpy as np
+            presentacion_num = np.where(presentacion_num > 0, presentacion_num,
+                                        pd.Series(case_pack_pl, index=display_sm.index))
+            presentacion_num = pd.Series(presentacion_num, index=display_sm.index)
+        presentacion_safe = presentacion_num.replace(0, float("nan"))
         unidades_num = pd.to_numeric(display_sm["Unidades en Stock"], errors="coerce")
         display_sm.insert(
             display_sm.columns.get_loc("Unidades en Stock"),
             "Stock Packs",
-            (unidades_num / presentacion_num.replace(0, float("nan"))).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
+            (unidades_num / presentacion_safe).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
         )
 
     # Resaltar filas de merma con color
