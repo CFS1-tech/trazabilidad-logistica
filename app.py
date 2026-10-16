@@ -1776,7 +1776,7 @@ elif vista == "🔴  Stock con Merma":
         stock_sm = stock_sm[stock_sm["CTN"] == f_ctn_sm]
 
     # ── Merge packing list ────────────────────────────────────────────────────
-    pk_sm = _build_pk_aux(["CASE PACK IN", col_proveedor_pk])
+    pk_sm = _build_pk_aux(["CASE PACK IN", "CASE PACK PL", col_proveedor_pk])
     if "CASE PACK IN" in pk_sm.columns:
         pk_sm["CASE PACK IN"] = pd.to_numeric(pk_sm["CASE PACK IN"], errors="coerce")
     stock_sm = stock_sm.merge(pk_sm, on=["CTN", "SKU MASEF"], how="left")
@@ -1813,21 +1813,20 @@ elif vista == "🔴  Stock con Merma":
     display_sm = stock_sm[cols_disp_sm].rename(columns=rename_sm)
 
     # Agregar columna Stock Packs (Unidades / Presentación)
-    # Usa CASE PACK IN; si está vacío o en 0, cae a CASE PACK PL
+    # Fallback: si CASE PACK IN = 0 o NaN, usa CASE PACK PL del mismo registro
     if "Presentación" in display_sm.columns:
-        presentacion_num = pd.to_numeric(display_sm["Presentación"], errors="coerce").fillna(0)
+        presentacion_num = pd.to_numeric(stock_sm["CASE PACK IN"], errors="coerce").fillna(0)
         if "CASE PACK PL" in stock_sm.columns:
-            case_pack_pl = pd.to_numeric(stock_sm["CASE PACK PL"].values, errors="coerce").fillna(0)
-            import numpy as np
-            presentacion_num = np.where(presentacion_num > 0, presentacion_num,
-                                        pd.Series(case_pack_pl, index=display_sm.index))
-            presentacion_num = pd.Series(presentacion_num, index=display_sm.index)
+            case_pack_pl = pd.to_numeric(stock_sm["CASE PACK PL"], errors="coerce").fillna(0)
+            presentacion_num = presentacion_num.where(presentacion_num > 0, case_pack_pl)
         presentacion_safe = presentacion_num.replace(0, float("nan"))
-        unidades_num = pd.to_numeric(display_sm["Unidades en Stock"], errors="coerce")
+        unidades_num = pd.to_numeric(stock_sm["Stock"], errors="coerce")
+        stock_packs = (unidades_num / presentacion_safe).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
+        stock_packs.index = display_sm.index
         display_sm.insert(
             display_sm.columns.get_loc("Unidades en Stock"),
             "Stock Packs",
-            (unidades_num / presentacion_safe).apply(lambda x: int(x) if pd.notna(x) and x > 0 else 0)
+            stock_packs
         )
 
     # Resaltar filas de merma con color
